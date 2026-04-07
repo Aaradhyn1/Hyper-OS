@@ -1,4 +1,4 @@
-# Fedora KDE Plasma image definition for Hyper-OS (x86_64)
+# Hyper-OS: Advanced Fedora KDE Plasma (x86_64)
 lang en_US.UTF-8
 keyboard us
 timezone UTC --utc
@@ -6,48 +6,78 @@ rootpw --lock
 user --name=hyper --groups=wheel --password=hyper --plaintext
 firewall --enabled --service=ssh
 selinux --enforcing
-services --enabled=sshd,NetworkManager,sddm,fwupd --disabled=kdump
-bootloader --timeout=1 --append="quiet splash"
+services --enabled=sshd,NetworkManager,sddm,fwupd,tlp,irqbalance --disabled=kdump,packagekit
+bootloader --timeout=1 --append="quiet splash iommu=pt intel_iommu=on nvme_load=YES"
 reboot
 
+# Advanced Storage: Btrfs with Zstd Compression for NVMe longevity
 zerombr
 clearpart --all --initlabel
-autopart --type=lvm
+part /boot/efi --fstype="efi" --size=600
+part /boot --fstype="ext4" --size=1024
+part btrfs.01 --grow --size=1
+part / --fstype="btrfs" --fsoptions="compress=zstd:3,discard=async,noatime" --ondisk=sda
 
-repo --name=fedora --baseurl=https://download.fedoraproject.org/pub/fedora/linux/releases/$releasever/Everything/x86_64/os/
-repo --name=updates --baseurl=https://download.fedoraproject.org/pub/fedora/linux/updates/$releasever/Everything/x86_64/
+# Repositories (Fedora + RPM Fusion for Multimedia/Hardware)
+repo --name=fedora --mirrorlist=https://fedoraproject.org
+repo --name=updates --mirrorlist=https://fedoraproject.org
+repo --name=rpmfusion-free --mirrorlist=https://rpmfusion.org
 
 %packages
 @^kde-desktop-environment
-NetworkManager
+@multimedia
+@hardware-support
+# Networking & Core
 NetworkManager-wifi
-plasma-workspace
-sddm
-konsole
-dolphin
-firefox
 openssh-server
-fwupd
-bolt
-thermald
+# Performance & Power
 tlp
 tlp-rdw
+thermald
 powertop
+irqbalance
+zram-generator
+# Wayland / KDE specific
+plasma-workspace-wayland
+konsole
+dolphin
+# Removal of Bloat
 -dracut-config-rescue
--plymouth
+-plymouth-scripts
+-fedora-release-notes
+-gnome-software
 %end
 
 %post --log=/root/hyper-os-post.log
-# Keep boot fast and image lean for desktop/laptop usage
-systemctl set-default graphical.target
-systemctl disable packagekit.service packagekit-offline-update.service || true
-systemctl enable fstrim.timer fwupd.service thermald.service tlp.service || true
-
-cat >/etc/motd.d/hyper-os-hardware.txt <<'EOT'
-Hyper-OS hardware note:
-- For NVIDIA dGPU systems (e.g., some ThinkPad P15 Gen 2 configs), install RPM Fusion and the NVIDIA driver after first boot.
-- Secure Boot users must enroll MOK/sign modules for third-party kernel modules.
+# 1. Enable ZRAM for high-performance memory swap
+cat > /etc/systemd/zram-generator.conf <<EOT
+[zram0]
+zram-size = min(ram / 2, 4096)
+compression-algorithm = zstd
 EOT
 
-dnf -y clean all || true
+# 2. KDE Plasma / Wayland Tweaks
+mkdir -p /etc/sddm.conf.d/
+cat > /etc/sddm.conf.d/wayland.conf <<EOT
+[General]
+DisplayServer=wayland
+EOT
+
+# 3. Kernel & Power Tuning
+systemctl enable tlp.service
+systemctl enable irqbalance.service
+# Optimize NVMe and SSDs
+systemctl enable fstrim.timer
+
+# 4. Hyper-OS Branding & MOTD
+cat > /etc/motd <<'EOT'
+   __ Hyper-OS Workstation __
+   Optimized for x86_64 / Btrfs
+   
+   Hardware: Run 'powertop --auto-tune' for max battery.
+   Graphics: Wayland enabled by default.
+EOT
+
+# 5. Cleanup
+dnf -y clean all
 %end
