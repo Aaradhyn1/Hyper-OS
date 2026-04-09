@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<USAGE
+Usage:
+  ./hyper build iso [extra-args]
+  ./hyper build rpi [extra-args]
+  ./hyper build fedora [extra-args]
+USAGE
+}
+
+die() {
+  echo "[hyper] ERROR: $*" >&2
+  exit 1
+}
+
+run_step() {
+  local step="$1"
+  shift
+  echo "[hyper] Running: $step"
+  "$@"
+}
+
+main() {
+  [[ $# -ge 2 ]] || {
+    usage
+    die "Missing required arguments"
+  }
+
+  local action="$1"
+  local target="$2"
+  shift 2
+
+  case "$action" in
+    build) ;;
+    *)
+      usage
+      die "Unknown action: $action"
+      ;;
+  esac
+
+  case "$target" in
+    iso)
+      run_step "build-rootfs" "$ROOT_DIR/scripts/build-rootfs.sh" "$@"
+      run_step "configure-system" "$ROOT_DIR/scripts/configure-system.sh" "$@"
+      run_step "build-iso" "$ROOT_DIR/scripts/build-iso.sh" "$@"
+      ;;
+    rpi)
+      run_step "build-rpi" "$ROOT_DIR/scripts/build.sh" "$@"
+      ;;
+    fedora)
+      run_step "build-fedora" "$ROOT_DIR/scripts/build-fedora-kde.sh" "$@"
+      ;;
+    *)
+      usage
+      die "Unknown build target: $target"
+      ;;
+  esac
+}
+
+main "$@"
