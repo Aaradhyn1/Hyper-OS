@@ -105,9 +105,13 @@ main() {
 
   log INFO "Generating live squashfs"
   rm -f "$ISO_DIR/live/filesystem.squashfs"
+  local squashfs_processors="1"
+  if command -v nproc >/dev/null 2>&1; then
+    squashfs_processors="$(nproc)"
+  fi
   if ! mksquashfs "$ROOTFS_DIR" "$ISO_DIR/live/filesystem.squashfs" \
     -e boot proc sys dev run tmp var/tmp mnt media lost+found \
-    -comp zstd -Xcompression-level 15 -b 1M -noappend; then
+    -comp zstd -Xcompression-level 6 -Xdict-size 1M -b 1M -processors "$squashfs_processors" -noappend; then
     die "Failed to generate $ISO_DIR/live/filesystem.squashfs"
   fi
 
