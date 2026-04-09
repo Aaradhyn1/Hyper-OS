@@ -2,9 +2,6 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="$ROOT_DIR/logs/hyper.log"
-
-mkdir -p "$ROOT_DIR/logs"
 
 usage() {
   cat <<USAGE
@@ -28,11 +25,7 @@ require_tool() {
 run_step() {
   local step="$1"
   shift
-  local script="$1"
-  shift
-  [[ -n "$script" ]] || die "run_step: missing script for step '$step'"
-  echo "[hyper][INFO][$(date '+%Y-%m-%d %H:%M:%S')] Running: $step" | tee -a "$LOG_FILE"
-  bash "$script" "$@" 2>&1 | tee -a "$LOG_FILE"
+
 }
 
 main() {
