@@ -17,6 +17,11 @@ die() {
   exit 1
 }
 
+require_tool() {
+  local tool="$1"
+  command -v "$tool" >/dev/null || die "$tool not found"
+}
+
 run_step() {
   local step="$1"
   shift
@@ -44,14 +49,24 @@ main() {
 
   case "$target" in
     iso)
+      require_tool mksquashfs
+      require_tool grub-mkrescue
+      require_tool unsquashfs
       run_step "build-rootfs" "$ROOT_DIR/scripts/build-rootfs.sh" "$@"
       run_step "configure-system" "$ROOT_DIR/scripts/configure-system.sh" "$@"
       run_step "build-iso" "$ROOT_DIR/scripts/build-iso.sh" "$@"
       ;;
     rpi)
+      require_tool make
+      if [[ "${OFFLINE_FALLBACK:-1}" != "1" && ! -f "${BUILDROOT_DIR:-$ROOT_DIR/buildroot}/Makefile" ]]; then
+        die "Buildroot source not found and OFFLINE_FALLBACK is disabled"
+      fi
       run_step "build-rpi" "$ROOT_DIR/scripts/build.sh" "$@"
       ;;
     fedora)
+      if [[ "${OFFLINE_FALLBACK:-1}" != "1" ]]; then
+        require_tool livemedia-creator
+      fi
       run_step "build-fedora" "$ROOT_DIR/scripts/build-fedora-kde.sh" "$@"
       ;;
     *)
