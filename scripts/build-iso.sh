@@ -106,7 +106,20 @@ main() {
   log INFO "Generating live squashfs"
   rm -f "$ISO_DIR/live/filesystem.squashfs"
   local squashfs_processors="1"
-
+  local squashfs_sort_file="$BUILD_DIR/squashfs-sort.txt"
+  if command -v nproc >/dev/null 2>&1; then
+    squashfs_processors="$(nproc)"
+  fi
+  : > "$squashfs_sort_file"
+  [[ -e "$ROOTFS_DIR/sbin/init" ]] && echo "sbin/init 32767" >> "$squashfs_sort_file"
+  [[ -d "$ROOTFS_DIR/lib/systemd" ]] && echo "lib/systemd 28672" >> "$squashfs_sort_file"
+  for path in lib lib64 usr/lib usr/lib64 bin sbin usr/bin usr/sbin; do
+    [[ -e "$ROOTFS_DIR/$path" ]] && echo "$path 24576" >> "$squashfs_sort_file"
+  done
+  if ! mksquashfs "$ROOTFS_DIR" "$ISO_DIR/live/filesystem.squashfs" \
+    -e boot proc sys dev run tmp var/tmp mnt media lost+found \
+    -comp zstd -Xcompression-level 6 -Xdict-size 1M -b 1M \
+    -sort "$squashfs_sort_file" -processors "$squashfs_processors" -noappend; then
     die "Failed to generate $ISO_DIR/live/filesystem.squashfs"
   fi
 
