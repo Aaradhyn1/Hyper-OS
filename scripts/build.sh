@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILDROOT_DIR="${BUILDROOT_DIR:-$ROOT_DIR/buildroot}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/out/rpi4}"
 OFFLINE_FALLBACK="${OFFLINE_FALLBACK:-1}"
+
+on_error() {
+  local line="${1:-unknown}"
+  local cmd="${2:-unknown}"
+  echo "[hyper-os] ERROR: build.sh failed at line ${line}: ${cmd}" >&2
+}
+
+trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 
 run_offline_bundle() {
   local images_dir="$OUTPUT_DIR/images"
