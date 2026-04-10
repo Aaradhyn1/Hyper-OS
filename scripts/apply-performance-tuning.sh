@@ -5,7 +5,7 @@ log() {
   printf '%s [perf] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1"
 }
 
-if [[ "$EUID" -ne 0 ]]; then
+if [[ "$EUID" -ne 0 ]]; then 
   echo "Run as root: sudo ./scripts/apply-performance-tuning.sh" >&2
   exit 1
 fi
