@@ -1,47 +1,71 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/out/fedora-kde-x86_64}"
-KICKSTART="${KICKSTART:-$ROOT_DIR/fedora/kickstarts/hyper-os-kde-x86_64.ks}"
-RELEASEVER="${RELEASEVER:-42}"
-OFFLINE_FALLBACK="${OFFLINE_FALLBACK:-1}"
-IMAGE_NAME="${IMAGE_NAME:-Hyper-OS-Fedora-KDE-x86_64}"
+# --- Migrated Configuration ---
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build/debian-live}"
+OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/out}"
+IMAGE_NAME="${IMAGE_NAME:-Hyper-OS-Debian-KDE}"
+DEBIAN_SUITE="${DEBIAN_SUITE:-bookworm}"
 
-run_offline_bundle() {
-  mkdir -p "$OUTPUT_DIR"
-  cp "$KICKSTART" "$OUTPUT_DIR/hyper-os-kde-x86_64.ks"
+log() { printf "\e[34m[hyper-migrate] [%s] %s\e[0m\n" "$(date '+%H:%M:%S')" "$1"; }
 
-  cat > "$OUTPUT_DIR/BUILD_INSTRUCTIONS.txt" <<EOT
-Hyper-OS Fedora KDE x86_64 offline bundle generated.
-
-A full image build requires a Fedora x86_64 host (or privileged container) with:
-  dnf install -y lorax-lmc-novirt livemedia-creator spin-kickstarts
-
-Build command:
-  sudo livemedia-creator --no-virt --ks $KICKSTART --resultdir $OUTPUT_DIR \\
-    --project "$IMAGE_NAME" --make-iso --releasever $RELEASEVER
-
-Notes:
-- This repository is now targeted at Fedora KDE Plasma for x86_64 systems.
-- The offline bundle preserves kickstart + exact command for reproducibility.
-EOT
-
-  echo "[hyper-os] livemedia-creator not available. Generated offline bundle at: $OUTPUT_DIR"
+require_root() {
+    [[ "$EUID" -eq 0 ]] || { log "ERROR: Root required (sudo ./build.sh)"; exit 1; }
 }
 
-if command -v livemedia-creator >/dev/null 2>&1; then
-  livemedia-creator --no-virt \
-    --ks "$KICKSTART" \
-    --resultdir "$OUTPUT_DIR" \
-    --project "$IMAGE_NAME" \
-    --make-iso \
-    --releasever "$RELEASEVER"
+# --- Core Build Logic ---
+setup_lb_config() {
+    log "Configuring Live-Build for $DEBIAN_SUITE..."
+    mkdir -p "$BUILD_DIR" && cd "$BUILD_DIR"
+    
+    # Initialize basic live-build structure
+    lb config \
+        --distribution "$DEBIAN_SUITE" \
+        --debian-installer none \
+        --archive-areas "main contrib non-free non-free-firmware" \
+        --apt-recommends false \
+        --linux-flavours amd64 \
+        --image-name "$IMAGE_NAME"
 
-  echo "Fedora KDE Plasma image artifacts are available in: $OUTPUT_DIR"
-elif [[ "$OFFLINE_FALLBACK" == "1" ]]; then
-  run_offline_bundle
-else
-  echo "[hyper-os] livemedia-creator is required for full Fedora image builds" >&2
-  exit 1
-fi
+    # 1. Package Migration (Equivalent to %packages)
+    log "Injecting migrated package lists..."
+    mkdir -p config/package-lists
+    cat > config/package-lists/hyper-os.list.chroot <<EOF
+kde-standard plasma-desktop sddm
+network-manager firefox-esr sudo curl
+fwupd bolt thermald tlp tlp-rdw powertop
+EOF
+
+    # 2. Optimization Migration (Equivalent to %post)
+    log "Injecting performance hooks..."
+    mkdir -p config/hooks/live
+    cat > config/hooks/live/99-hyper-optimize.chroot <<'EOF'
+#!/bin/sh
+# Applied from previously discussed optimizations
+systemctl enable fstrim.timer thermald.service tlp.service
+systemctl disable apt-daily.service apt-daily.timer packagekit.service
+echo "hyper:hyper" | chpasswd
+EOF
+    chmod +x config/hooks/live/99-hyper-optimize.chroot
+}
+
+main() {
+    require_root
+    
+    if ! command -v lb >/dev/null; then
+        log "Installing live-build dependencies..."
+        apt-get update && apt-get install -y live-build debootstrap
+    fi
+
+    setup_lb_config
+    
+    log "Starting ISO construction..."
+    lb build
+    
+    mkdir -p "$OUTPUT_DIR"
+    mv *.iso "$OUTPUT_DIR/${IMAGE_NAME}.iso"
+    log "Build Complete: $OUTPUT_DIR/${IMAGE_NAME}.iso"
+}
+
+main "$@"
