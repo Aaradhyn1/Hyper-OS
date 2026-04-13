@@ -2,45 +2,69 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=scripts/lib/build-common.sh
 source "$SCRIPT_DIR/lib/build-common.sh"
 
+# --- Advanced Configuration ---
 DEBIAN_SUITE="${DEBIAN_SUITE:-bookworm}"
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-http://deb.debian.org/debian}"
-ARCH="${ARCH:-amd64}"
-HOSTNAME="${HOSTNAME:-hyperos}"
-USERNAME="${USERNAME:-hyper}"
+# Core packages for a functional low-latency live system
+CORE_PKGS="linux-image-amd64,live-boot,systemd-sysv,sudo,network-manager,iproute2,pciutils,kmod,zstd"
 
 main() {
   use_shared_logging
   require_root
-  require_cmds debootstrap find mount umount tee
+  require_cmds debootstrap systemd-nspawn
 
-  log INFO "Preparing workspace"
+  log INFO "Initializing Hyper OS Workspace"
   cleanup_mounts
-  rm -rf "$ROOTFS_DIR"
-  mkdir -p "$BUILD_DIR" "$ROOTFS_DIR"
+  rm -rf "$ROOTFS_DIR" && mkdir -p "$ROOTFS_DIR"
 
-  log INFO "Bootstrapping Debian rootfs ($DEBIAN_SUITE/$ARCH)"
-  debootstrap --arch="$ARCH" --variant=minbase "$DEBIAN_SUITE" "$ROOTFS_DIR" "$DEBIAN_MIRROR"
+  # 1. Optimized Bootstrap
+  # Using --include ensures we don't need a heavy second stage for core tools
+  log INFO "Bootstrapping optimized minbase with core packages"
+  debootstrap \
+    --arch="${ARCH:-amd64}" \
+    --variant=minbase \
+    --include="$CORE_PKGS" \
+    "$DEBIAN_SUITE" "$ROOTFS_DIR" "$DEBIAN_MIRROR"
 
-  log INFO "Writing baseline system files"
-  cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
+  # 2. Advanced Networking & DNS Setup
+  log INFO "Configuring network stack"
   echo "$HOSTNAME" > "$ROOTFS_DIR/etc/hostname"
+  # Use systemd-resolved for better latency/caching
+  ln -sf /run/systemd/resolve/stub-resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
 
-  cat > "$ROOTFS_DIR/etc/fstab" <<'FSTAB'
-proc   /proc    proc    defaults                              0 0
-sysfs  /sys     sysfs   defaults                              0 0
-devpts /dev/pts devpts  gid=5,mode=620,ptmxmode=000          0 0
-FSTAB
+  # 3. APT Optimization (No Recommends = No Bloat)
+  log INFO "Tuning APT for minimal footprint"
+  cat > "$ROOTFS_DIR/etc/apt/apt.conf.d/01-hyperos-tuning" <<EOF
+APT::Install-Recommends "0";
+APT::Install-Suggests "0";
+APT::Sandbox::User "root";
+Binary::apt::APT::Keep-Downloaded-Packages "0";
+EOF
 
-  install -d -m 0755 "$ROOTFS_DIR/etc/sudoers.d"
-  cat > "$ROOTFS_DIR/etc/sudoers.d/$USERNAME" <<SUDOERS
-$USERNAME ALL=(ALL:ALL) ALL
-SUDOERS
-  chmod 0440 "$ROOTFS_DIR/etc/sudoers.d/$USERNAME"
+  # 4. Use systemd-nspawn for safe configuration
+  # This is much safer than manual mount/chroot
+  log INFO "Running internal OS provisioning via nspawn"
+  systemd-nspawn -D "$ROOTFS_DIR" /bin/bash <<EOF
+    set -e
+    # Create user with a pre-locked or specific password configuration
+    useradd -m -s /bin/bash "$USERNAME"
+    echo "$USERNAME:hyperos" | chpasswd
+    usermod -aG sudo,video,audio "$USERNAME"
+    
+    # Force kernel to update initramfs inside the rootfs
+    update-initramfs -u
+EOF
 
-  log INFO "Rootfs created at $ROOTFS_DIR"
+  # 5. Advanced Hardware/Performance Baseline
+  log INFO "Applying low-latency baseline"
+  cat > "$ROOTFS_DIR/etc/default/irqbalance" <<EOF
+# Prevent irqbalance from moving interrupts too frequently
+IRQBALANCE_ONESHOT=1
+EOF
+
+  log SUCCESS "Rootfs provisioned. Size: $(du -sh "$ROOTFS_DIR" | cut -f1)"
 }
 
 main "$@"
