@@ -1,86 +1,115 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="$ROOT_DIR/logs/hyper.log"
+# --- Configuration & Paths ---
+export ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export LOG_DIR="$ROOT_DIR/logs"
+export LOG_FILE="$LOG_DIR/hyper-$(date +%Y%m).log"
+export LOCK_FILE="/tmp/hyper-build.lock"
 
-mkdir -p "$ROOT_DIR/logs"
+mkdir -p "$LOG_DIR"
 
-usage() {
-  cat <<USAGE
-Usage:
-  ./hyper build iso [extra-args]
-  ./hyper build rpi [extra-args]
-  ./hyper build fedora [extra-args]
-USAGE
+# --- Advanced Logging & UI ---
+log() {
+  local level="$1"; shift
+  local color="\e[34m"
+  [[ "$level" == "ERROR" ]] && color="\e[31m"
+  [[ "$level" == "SUCCESS" ]] && color="\e[32m"
+  
+  printf "${color}[hyper][%s][%s] %s\e[0m\n" "$level" "$(date '+%H:%M:%S')" "$*" | tee -a "$LOG_FILE"
 }
 
-die() {
-  echo "[hyper] ERROR: $*" >&2
-  exit 1
+die() { log ERROR "$*"; exit 1; }
+
+# --- Resource Management ---
+acquire_lock() {
+  exec 200>"$LOCK_FILE"
+  if ! flock -n 200; then
+    die "Another build process is running ($LOCK_FILE). Please wait."
+  fi
 }
 
 require_tool() {
-  local tool="$1"
-  command -v "$tool" >/dev/null || die "$tool not found"
+  for tool in "$@"; do
+    command -v "$tool" >/dev/null 2>&1 || die "Missing dependency: $tool"
+  done
 }
 
+# --- Execution Engine ---
 run_step() {
-  local step="$1"
-  shift
-  local script="$1"
-  shift
-  [[ -n "$script" ]] || die "run_step: missing script for step '$step'"
-  [[ -x "$script" ]] || die "run_step: script '$script' not found or not executable"
-  echo "[hyper][INFO][$(date '+%Y-%m-%d %H:%M:%S')] Running: $step" | tee -a "$LOG_FILE"
-  bash "$script" "$@" 2>&1 | tee -a "$LOG_FILE"
+  local step_label="$1"; shift
+  local script_path="$1"; shift
+  
+  [[ -x "$script_path" ]] || die "Script not found or executable: $script_path"
+  
+  log INFO "Initiating: $step_label"
+  # Use PIPESTATUS to catch script failure while still using tee
+  set +e
+  bash "$script_path" "$@" 2>&1 | tee -a "$LOG_FILE"
   local status=${PIPESTATUS[0]}
-  [[ $status -eq 0 ]] || die "run_step: step '$step' failed with status $status"
+  set -e
+  
+  [[ $status -eq 0 ]] || die "Step '$step_label' exited with code $status"
+}
+
+# --- Targets ---
+build_iso() {
+  require_tool mksquashfs grub-mkrescue unsquashfs xorriso
+  run_step "Rootfs-Bootstrap" "$ROOT_DIR/scripts/build-rootfs.sh" "$@"
+  run_step "System-Tuning"    "$ROOT_DIR/scripts/configure-system.sh" "$@"
+  run_step "ISO-Generation"   "$ROOT_DIR/scripts/build-iso.sh" "$@"
+  log SUCCESS "ISO Build Complete."
+}
+
+build_rpi() {
+  require_tool make gcc bison flex
+  export BR2_EXTERNAL="${BR2_EXTERNAL:-$ROOT_DIR/external}"
+  run_step "RPi-Buildroot" "$ROOT_DIR/scripts/build.sh" "$@"
+  log SUCCESS "Raspberry Pi Image Complete."
+}
+
+# --- Main Logic ---
+usage() {
+  cat <<EOF
+Hyper OS Advanced CLI
+
+Usage: $0 build [target] [options]
+
+Targets:
+  iso        Debian-based Live ISO (AMD64)
+  rpi        Raspberry Pi Buildroot Image
+  fedora     Fedora-based KDE Live Media
+
+Options:
+  --debug    Enable verbose shell execution
+  --dry-run  Validate steps without execution
+EOF
 }
 
 main() {
-  [[ $# -ge 2 ]] || {
-    usage
-    die "Missing required arguments"
-  }
+  [[ $# -lt 2 ]] && { usage; exit 1; }
 
-  local action="$1"
-  local target="$2"
-  shift 2
+  local action="$1"; shift
+  local target="$1"; shift
+
+  # Handle Global Flags
+  for arg in "$@"; do
+    [[ "$arg" == "--debug" ]] && set -x
+  done
+
+  acquire_lock
 
   case "$action" in
-    build) ;;
+    build)
+      case "$target" in
+        iso)    build_iso "$@" ;;
+        rpi)    build_rpi "$@" ;;
+        fedora) run_step "Fedora-KDE" "$ROOT_DIR/scripts/build-fedora-kde.sh" "$@" ;;
+        *)      die "Unknown target: $target" ;;
+      esac
+      ;;
     *)
-      usage
       die "Unknown action: $action"
-      ;;
-  esac
-
-  case "$target" in
-    iso)
-      require_tool mksquashfs
-      require_tool grub-mkrescue
-      require_tool unsquashfs
-      run_step "build-rootfs" "$ROOT_DIR/scripts/build-rootfs.sh" "$@"
-      run_step "configure-system" "$ROOT_DIR/scripts/configure-system.sh" "$@"
-      run_step "build-iso" "$ROOT_DIR/scripts/build-iso.sh" "$@"
-      ;;
-    rpi)
-      require_tool make
-      if [[ "${OFFLINE_FALLBACK:-1}" != "1" && ! -f "${BUILDROOT_DIR:-$ROOT_DIR/buildroot}/Makefile" ]]; then
-        die "Buildroot source not found and OFFLINE_FALLBACK is disabled"
-      fi
-      run_step "build-rpi" "$ROOT_DIR/scripts/build.sh" "$@"
-      ;;
-    fedora)
-      if [[ "${OFFLINE_FALLBACK:-1}" != "1" ]]; then
-        require_tool livemedia-creator
-      fi
-      run_step "build-fedora" "$ROOT_DIR/scripts/build-fedora-kde.sh" "$@"
-      ;;
-    *)
-      usage
-      die "Unknown build target: $target"
       ;;
   esac
 }
