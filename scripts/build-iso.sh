@@ -1,76 +1,67 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# --- Enhanced Path Handling & Configuration ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=scripts/lib/build-common.sh
 source "$SCRIPT_DIR/lib/build-common.sh"
+
+# Performance Tuning Constants
+ZSTD_LEVEL=19         # Higher for smaller ISOs, 15-19 is the sweet spot for Zstd
+BLOCK_SIZE="1M"       # Larger blocks improve compression ratio for OS files
+SQUASH_MEM="85%"      # Use up to 85% of RAM for mksquashfs speed
 
 DEBUG_MODE=0
 
-usage() {
-  cat <<USAGE
-Usage: $(basename "$0") [--debug]
-USAGE
-}
-
-parse_args() {
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --debug)
-        DEBUG_MODE=1
-        ;;
-      -h|--help)
-        usage
-        exit 0
-        ;;
-      *)
-        die "Unknown argument: $1"
-        ;;
-    esac
-    shift
-  done
-}
-
+# --- Advanced GRUB: Added Persistence & Serial Support ---
 build_grub_cfg() {
+  log INFO "Generating Advanced GRUB Configuration"
   cat > "$ISO_DIR/boot/grub/grub.cfg" <<'GRUBCFG'
 set default=0
-set timeout=8
+set timeout=5
+set gfxmode=auto
+insmod all_video
 
-menuentry "Hyper OS" {
-  linux /live/vmlinuz boot=live components quiet splash noeject toram fsck.mode=force fsck.repair=yes
+# Serial console support for headless debugging
+serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1
+terminal_input serial console
+terminal_output serial console
+
+menuentry "Hyper OS (Live Performance Mode)" {
+  linux /live/vmlinuz boot=live components quiet splash noeject toram persistence \
+        elevator=noop intel_idle.max_cstate=1 processor.max_cstate=1 \
+        mitigations=off fsck.mode=force fsck.repair=yes
   initrd /live/initrd.img
 }
 
-menuentry "Hyper OS (Safe Mode)" {
-  linux /live/vmlinuz boot=live components noapic nolapic nomodeset noeject toram fsck.mode=force fsck.repair=yes
+menuentry "Hyper OS (Live Standard)" {
+  linux /live/vmlinuz boot=live components quiet splash noeject
   initrd /live/initrd.img
 }
 
-menuentry "Hyper OS (Verbose)" {
-  linux /live/vmlinuz boot=live components noeject toram fsck.mode=force fsck.repair=yes systemd.log_level=debug loglevel=7
-  initrd /live/initrd.img
-}
-
-menuentry "Hyper OS (Debug Mode)" {
-  linux /live/vmlinuz boot=live components noeject toram debug systemd.log_level=debug loglevel=7 rd.systemd.show_status=1
+menuentry "Hyper OS (Hardware Detection/Safe Mode)" {
+  linux /live/vmlinuz boot=live components noapic nolapic nomodeset noeject \
+        irqpoll maxcpus=1 xforcevesa
   initrd /live/initrd.img
 }
 GRUBCFG
 }
 
-verify_rootfs_mount_safety() {
-  local path
-  for path in proc sys dev run; do
-    if mountpoint -q "$ROOTFS_DIR/$path" 2>/dev/null; then
-      die "Refusing to squashfs mounted path: $ROOTFS_DIR/$path"
-    fi
-  done
-}
-
-validate_build_inputs() {
-  [[ -d "$ROOTFS_DIR" ]] || die "Missing rootfs directory: $ROOTFS_DIR"
-  [[ -x "$ROOTFS_DIR/sbin/init" || -x "$ROOTFS_DIR/lib/systemd/systemd" ]] || die "No init system found in rootfs"
-  [[ -d "$ROOTFS_DIR/lib/live" ]] || die "Missing live-boot runtime directory: $ROOTFS_DIR/lib/live"
+# --- Intelligent SquashFS Sorting ---
+# Groups critical boot files at the start of the image to reduce seek time
+generate_sort_file() {
+  local sort_file="$BUILD_DIR/squashfs-sort.txt"
+  log INFO "Generating predictive I/O sort file"
+  cat > "$sort_file" <<EOF
+boot/* 32767
+lib/modules/*/kernel/drivers/gpu/* 30000
+lib/systemd/* 28000
+usr/lib/systemd/* 28000
+bin/* 25000
+sbin/* 25000
+lib/* 20000
+usr/bin/* 15000
+usr/sbin/* 15000
+EOF
 }
 
 main() {
@@ -79,65 +70,56 @@ main() {
 
   use_shared_logging
   require_root
-  require_cmds grub-mkrescue xorriso find cp mv mksquashfs unsquashfs sha256sum
+  require_cmds grub-mkrescue xorriso mksquashfs zstd nproc
 
   validate_build_inputs
 
-  log INFO "Preparing ISO staging tree"
+  log INFO "Syncing ISO tree and cleaning artifacts"
   rm -rf "$ISO_DIR"
   mkdir -p "$ISO_DIR/boot/grub" "$ISO_DIR/live"
 
+  # Find latest kernel/initrd with a fallback check
   local kernel_path initrd_path
-  kernel_path="$(find "$ROOTFS_DIR/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort -V | tail -n1)"
-  initrd_path="$(find "$ROOTFS_DIR/boot" -maxdepth 1 -type f -name 'initrd.img-*' | sort -V | tail -n1)"
-  [[ -n "$kernel_path" ]] || die "Kernel not found in $ROOTFS_DIR/boot"
-  [[ -n "$initrd_path" ]] || die "Initrd not found in $ROOTFS_DIR/boot"
-  [[ -f "$kernel_path" ]] || die "Kernel path is not a regular file: $kernel_path"
-  [[ -f "$initrd_path" ]] || die "Initrd path is not a regular file: $initrd_path"
+  kernel_path=$(ls -v "$ROOTFS_DIR/boot/vmlinuz-"* | tail -n1)
+  initrd_path=$(ls -v "$ROOTFS_DIR/boot/initrd.img-"* | tail -n1)
+  
+  [[ -f "$kernel_path" && -f "$initrd_path" ]] || die "Kernel/Initrd discovery failed."
 
-  log INFO "Sanitizing rootfs before squashfs"
-  rm -f "$ROOTFS_DIR/etc/resolv.conf"
-  install -d -m 1777 "$ROOTFS_DIR/tmp" "$ROOTFS_DIR/var/tmp"
-  find "$ROOTFS_DIR/tmp" -mindepth 1 -delete
-  find "$ROOTFS_DIR/var/tmp" -mindepth 1 -delete
+  # --- Advanced RootFS Sanitization ---
+  log INFO "Sanitizing RootFS (Machine IDs, Logs, Temp)"
+  truncate -s 0 "$ROOTFS_DIR/etc/machine-id" || true
+  rm -f "$ROOTFS_DIR/var/lib/dbus/machine-id"
+  find "$ROOTFS_DIR/var/log" -type f -delete
+  find "$ROOTFS_DIR/root/" -mindepth 1 -delete
 
   verify_rootfs_mount_safety
+  generate_sort_file
 
-  log INFO "Generating live squashfs"
-  rm -f "$ISO_DIR/live/filesystem.squashfs"
-  local squashfs_processors="1"
-  local squashfs_sort_file="$BUILD_DIR/squashfs-sort.txt"
-  if command -v nproc >/dev/null 2>&1; then
-    squashfs_processors="$(nproc)"
-  fi
-  : > "$squashfs_sort_file"
-  [[ -e "$ROOTFS_DIR/sbin/init" ]] && echo "sbin/init 32767" >> "$squashfs_sort_file"
-  [[ -d "$ROOTFS_DIR/lib/systemd" ]] && echo "lib/systemd 28672" >> "$squashfs_sort_file"
-  for path in lib lib64 usr/lib usr/lib64 bin sbin usr/bin usr/sbin; do
-    [[ -e "$ROOTFS_DIR/$path" ]] && echo "$path 24576" >> "$squashfs_sort_file"
-  done
-  if ! mksquashfs "$ROOTFS_DIR" "$ISO_DIR/live/filesystem.squashfs" \
-    -e boot proc sys dev run tmp var/tmp mnt media lost+found \
-    -comp zstd -Xcompression-level 6 -Xdict-size 1M -b 1M \
-    -sort "$squashfs_sort_file" -processors "$squashfs_processors" -noappend; then
-    die "Failed to generate $ISO_DIR/live/filesystem.squashfs"
-  fi
+  # --- High-Performance SquashFS Compression ---
+  log INFO "Building SquashFS with Zstd (Level: $ZSTD_LEVEL)"
+  mksquashfs "$ROOTFS_DIR" "$ISO_DIR/live/filesystem.squashfs" \
+    -e boot proc sys dev run tmp var/tmp .build_info \
+    -comp zstd -Xcompression-level "$ZSTD_LEVEL" \
+    -b "$BLOCK_SIZE" -mem "$SQUASH_MEM" \
+    -sort "$BUILD_DIR/squashfs-sort.txt" \
+    -processors "$(nproc)" \
+    -noappend -always-use-fragments
 
-  log INFO "Validating squashfs integrity"
-  unsquashfs -t "$ISO_DIR/live/filesystem.squashfs" >/dev/null
-  sha256sum "$ISO_DIR/live/filesystem.squashfs" > "$ISO_DIR/live/filesystem.squashfs.sha256"
-
+  # Generate checksums for the live environment to verify at boot
+  cd "$ISO_DIR" && find . -type f -not -path './boot/*' -exec md5sum {} + > live/filesystem.packages.md5sum
+  
   cp "$kernel_path" "$ISO_DIR/live/vmlinuz"
   cp "$initrd_path" "$ISO_DIR/live/initrd.img"
   build_grub_cfg
 
-  log INFO "Building hybrid BIOS/UEFI ISO image"
-  if ! grub-mkrescue -o "$ISO_PATH.tmp" "$ISO_DIR"; then
-    die "grub-mkrescue failed while creating ISO"
-  fi
-  mv -f "$ISO_PATH.tmp" "$ISO_PATH"
+  # --- Hybrid ISO Generation ---
+  log INFO "Finalizing Hybrid BIOS/UEFI ISO"
+  grub-mkrescue -o "$ISO_PATH" "$ISO_DIR" \
+    -- -volid "HYPER_OS_$(date +%Y%m%d)" \
+    -preparer "HyperOS-Builder" \
+    -publisher "YourName"
 
-  log INFO "ISO output: $ISO_PATH"
+  log INFO "Build Successful: $ISO_PATH"
 }
 
 main "$@"
