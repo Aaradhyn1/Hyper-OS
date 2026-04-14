@@ -30,7 +30,7 @@ echo "$USERNAME:$USERNAME" | chpasswd
 usermod -aG sudo "$USERNAME"
 echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME
 
-# Networking Tuning
+# Networking Tuning Lowest Latency
 cat > /etc/network/interfaces <<EOT
 auto lo
 iface lo inet loopback
