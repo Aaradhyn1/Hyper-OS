@@ -71,6 +71,62 @@ EOF
 EOF
 
     # 7. Final Cleanup (Reduce SquashFS Size)
+    install -d /usr/local/sbin
+    cat > /usr/local/sbin/check-live-persistence <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+warn() {
+  logger -t hyper-persistence-warning -- "$1"
+  printf 'WARNING: %s\n' "$1" >&2
+}
+
+mapfile -t persistence_devices < <(blkid -t LABEL=HYPER_PERSIST -o device || true)
+[[ "${#persistence_devices[@]}" -gt 0 ]] || exit 0
+
+for dev in "${persistence_devices[@]}"; do
+  mount_dir="$(mktemp -d)"
+  if ! mount -o ro "$dev" "$mount_dir" 2>/dev/null; then
+    warn "Persistence device $dev exists but could not be mounted read-only. Falling back to non-persistent live mode."
+    rmdir "$mount_dir"
+    continue
+  fi
+
+  if [[ ! -f "$mount_dir/persistence.conf" ]]; then
+    warn "Persistence device $dev is missing /persistence.conf. Required content: '/ union'."
+    umount "$mount_dir"
+    rmdir "$mount_dir"
+    continue
+  fi
+
+  if ! grep -Eq '^[[:space:]]*/[[:space:]]+union([[:space:]]|$)' "$mount_dir/persistence.conf"; then
+    warn "Persistence device $dev has invalid /persistence.conf. Required content: '/ union'."
+  fi
+
+  umount "$mount_dir"
+  rmdir "$mount_dir"
+done
+EOF
+    chmod 0755 /usr/local/sbin/check-live-persistence
+
+    cat > /etc/systemd/system/check-live-persistence.service <<'EOF'
+[Unit]
+Description=Validate Hyper OS live persistence partition configuration
+DefaultDependencies=no
+After=local-fs.target
+ConditionKernelCommandLine=boot=live
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/check-live-persistence
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl enable check-live-persistence.service
+
+    # 8. Final Cleanup (Reduce SquashFS Size)
     apt-get autoremove -y
     apt-get clean
     rm -rf /var/lib/apt/lists/*
