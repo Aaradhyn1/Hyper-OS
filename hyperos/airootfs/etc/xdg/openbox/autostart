@@ -1,0 +1,3 @@
+# Hyper OS Openbox autostart
+nm-applet &
+pcmanfm --desktop --profile LXDE &

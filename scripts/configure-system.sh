@@ -9,12 +9,31 @@ source "$SCRIPT_DIR/lib/build-common.sh"
 KDE_PKGS="plasma-desktop sddm konsole dolphin" # If migrating to KDE
 LIGHT_PKGS="openbox lightdm pcmanfm xterm"     # Current lean setup
 PERF_PKGS="zram-tools irqbalance pipewire-audio-client-libraries"
+INSTALLER_PKGS="calamares calamares-settings-debian parted grub-pc grub-efi-amd64 os-prober"
 
 log INFO "Initializing Advanced Configuration for $HOSTNAME"
 
 main() {
   setup_build_env
   mount_chroot_fs
+
+  log INFO "Installing Calamares configuration and launcher assets"
+  install -d "$ROOTFS_DIR/etc/calamares/modules" \
+    "$ROOTFS_DIR/etc/calamares/branding/hyperos" \
+    "$ROOTFS_DIR/usr/local/bin" \
+    "$ROOTFS_DIR/usr/share/applications" \
+    "$ROOTFS_DIR/etc/xdg/autostart"
+  install -m 0644 "$ROOT_DIR/configs/calamares/settings.conf" "$ROOTFS_DIR/etc/calamares/settings.conf"
+  install -m 0644 "$ROOT_DIR/configs/calamares/modules.conf" "$ROOTFS_DIR/etc/calamares/modules.conf"
+  install -m 0644 "$ROOT_DIR/configs/calamares/branding/branding.desc" "$ROOTFS_DIR/etc/calamares/branding/hyperos/branding.desc"
+  install -m 0644 "$ROOT_DIR/configs/calamares/branding/show.qml" "$ROOTFS_DIR/etc/calamares/branding/hyperos/show.qml"
+  install -m 0644 "$ROOT_DIR/configs/calamares/modules/unpackfs.conf" "$ROOTFS_DIR/etc/calamares/modules/unpackfs.conf"
+  install -m 0644 "$ROOT_DIR/configs/calamares/modules/bootloader.conf" "$ROOTFS_DIR/etc/calamares/modules/bootloader.conf"
+  install -m 0644 "$ROOT_DIR/configs/calamares/modules/shellprocess.conf" "$ROOTFS_DIR/etc/calamares/modules/shellprocess.conf"
+  install -m 0755 "$ROOT_DIR/configs/installer/hyperos-installer" "$ROOTFS_DIR/usr/local/bin/hyperos-installer"
+  install -m 0644 "$ROOT_DIR/configs/installer/install-hyper-os.desktop" "$ROOTFS_DIR/usr/share/applications/install-hyper-os.desktop"
+  install -m 0644 "$ROOT_DIR/configs/installer/hyperos-calamares-autostart.desktop" \
+    "$ROOTFS_DIR/etc/xdg/autostart/hyperos-calamares-autostart.desktop"
 
   chroot "$ROOTFS_DIR" /usr/bin/env bash -eux <<CHROOT
     export DEBIAN_FRONTEND=noninteractive
@@ -23,6 +42,7 @@ main() {
     apt-get update
     apt-get install -y --no-install-recommends \
       $LIGHT_PKGS $PERF_PKGS \
+      $INSTALLER_PKGS \
       apparmor apparmor-utils ufw \
       htop neofetch mesa-utils
     
