@@ -1,98 +1,96 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# --- Environment Context ---
-export ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-export BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
-export ROOTFS_DIR="${ROOTFS_DIR:-$BUILD_DIR/rootfs}"
-export ISO_DIR="${ISO_DIR:-$BUILD_DIR/iso}"
-export LOG_DIR="${LOG_DIR:-$BUILD_DIR/logs}"
+# --- Enterprise Configuration ---
+export IDENTIFIER="hyper-core-$(date +%s)"
+export WORKSPACE="${WORKSPACE:-/tmp/$IDENTIFIER}"
+export SHM_SIZE="${SHM_SIZE:-2G}" # Speed up builds with RAM-backed storage
 
-# --- Advanced Logging (with Colors & File Descriptors) ---
-log() {
-  local level="$1"; shift
-  local color=""
-  case "$level" in
-    INFO)  color="\e[32m" ;; # Green
-    WARN)  color="\e[33m" ;; # Yellow
-    ERROR) color="\e[31m" ;; # Red
-    *)     color="\e[34m" ;; # Blue
-  esac
-  printf "${color}%s [%s] %b\e[0m\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$level" "$*" >&2
-}
-
-use_shared_logging() {
-  mkdir -p "$LOG_DIR"
-  local log_path="$LOG_DIR/build-$(date +%Y%m%d-%H%M).log"
-  # Redirect stdout/stderr to both file and console using process substitution
-  exec > >(tee -a "$log_path") 2>&1
-  log INFO "Session logs: $log_path"
-}
-
-# --- Intelligent Mount Management ---
-# Uses a reverse-order unmount to prevent "target is busy" errors
-cleanup_mounts() {
-  log INFO "Cleaning up filesystem mounts..."
-  local mounts=(
-    "$ROOTFS_DIR/dev/pts"
-    "$ROOTFS_DIR/dev"
-    "$ROOTFS_DIR/proc"
-    "$ROOTFS_DIR/sys"
-    "$ROOTFS_DIR/run"
-    "$ROOTFS_DIR/tmp"
-  )
-  
-  for mnt in "${mounts[@]}"; do
-    if mountpoint -q "$mnt" 2>/dev/null; then
-      umount -l "$mnt" || log WARN "Lazy unmount failed for $mnt"
+# --- Advanced Isolation (The "Sandbox" Logic) ---
+# Uses unshare to create a private mount namespace
+isolate_namespace() {
+    if [[ "${NS_ISOLATED:-}" != "true" ]]; then
+        log INFO "Spawning isolated mount namespace..."
+        export NS_ISOLATED=true
+        # -m: Private mount namespace | -u: Private UTS (hostname) namespace
+        exec unshare -m -u --map-root-user "$BASH_SOURCE" "$@"
     fi
-  done
 }
 
-mount_chroot_fs() {
-  log INFO "Preparing Chroot environment at $ROOTFS_DIR"
-  mkdir -p "$ROOTFS_DIR"/{dev,proc,sys,run,tmp}
-  
-  # Use bind mounts with private propagation to protect the host
-  mount --bind /dev "$ROOTFS_DIR/dev"
-  mount --bind /dev/pts "$ROOTFS_DIR/dev/pts"
-  mount -t proc proc "$ROOTFS_DIR/proc"
-  mount -t sysfs sysfs "$ROOTFS_DIR/sys"
-  mount -t tmpfs tmpfs "$ROOTFS_DIR/run"
-  mount -t tmpfs tmpfs "$ROOTFS_DIR/tmp"
+# --- Snapshotting with OverlayFS ---
+# Allows you to "undo" changes to your rootfs instantly
+setup_overlay() {
+    log INFO "Initializing OverlayFS Layer..."
+    mkdir -p "$WORKSPACE"/{lower,upper,work,merged}
+    
+    # 'lower' is your read-only base; 'upper' is where changes are written
+    # This prevents accidental modification of your golden image base
+    mount -t overlay overlay \
+        -o lowerdir="$ROOTFS_DIR",upperdir="$WORKSPACE/upper",workdir="$WORKSPACE/work" \
+        "$WORKSPACE/merged"
+    
+    # Update global path to point to the virtual merged layer
+    export TARGET_DIR="$WORKSPACE/merged"
 }
 
-# --- System Safety & Validation ---
-require_root() {
-  (( EUID == 0 )) || { log ERROR "Root required. Run with sudo."; exit 1; }
+# --- Atomic Chroot Execution ---
+# Runs a command inside the chroot and ensures it cannot escape
+chroot_exec() {
+    local cmd="$*"
+    log INFO "Executing inside Jail: $cmd"
+    
+    # Use 'systemd-run' to cap CPU/RAM so the build doesn't freeze the host
+    systemd-run --scope -p MemoryMax=4G -p CPUQuota=80% \
+        chroot "$TARGET_DIR" /bin/bash -c "
+            export HOME=/root
+            export LC_ALL=C.UTF-8
+            source /etc/profile
+            $cmd
+        "
 }
 
-require_cmds() {
-  local missing=()
-  for cmd in "$@"; do
-    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
-  done
-  if (( ${#missing[@]} > 0 )); then
-    log ERROR "Dependencies missing: ${missing[*]}"
-    log INFO "Try: apt-get install ${missing[*]}"
-    exit 1
-  fi
+# --- Virtual Hardware Injection ---
+# Injects fake hardware info so the build doesn't try to touch host firmware
+mock_hardware() {
+    log INFO "Mocking hardware interfaces..."
+    mkdir -p "$TARGET_DIR/sys/class/dmi/id"
+    echo "Hyper-OS-Virtual-Platform" > "$TARGET_DIR/sys/class/dmi/id/product_name"
+    
+    # Prevent the chroot from starting real services
+    cat <<EOF > "$TARGET_DIR/usr/sbin/policy-rc.d"
+#!/bin/sh
+exit 101
+EOF
+    chmod +x "$TARGET_DIR/usr/sbin/policy-rc.d"
 }
 
-# --- Signal Handling (The "Pro" Feature) ---
-# Automatically cleans up if the user hits Ctrl+C or a script fails
-safe_exit_trap() {
-  local exit_code=$?
-  if (( exit_code != 0 )); then
-    log ERROR "Build interrupted or failed (Code: $exit_code)"
-  fi
-  cleanup_mounts
-  exit "$exit_code"
+# --- Enhanced Error Telemetry ---
+dump_debug_info() {
+    log WARN "Generating post-mortem diagnostics..."
+    df -h "$TARGET_DIR"
+    grep "$TARGET_DIR" /proc/mounts > "$LOG_DIR/mount_leak.log" || true
 }
 
-# Call this at the start of your main scripts
-setup_build_env() {
-  trap safe_exit_trap EXIT INT TERM
-  require_root
-  use_shared_logging
+# --- Execution ---
+main() {
+    setup_build_env
+    isolate_namespace "$@"
+    
+    # 1. Validation
+    require_cmds systemd-run unshare mount chroot
+    
+    # 2. Virtualization Layer
+    setup_overlay
+    mount_chroot_fs "$TARGET_DIR"
+    mock_hardware
+    
+    # 3. Task Execution Example
+    chroot_exec "apt-get update && apt-get install -y linux-image-amd64"
+    
+    log INFO "Build Phase Finished Successfully."
 }
+
+# Trigger main if script is executed directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
