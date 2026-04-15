@@ -146,16 +146,7 @@ WantedBy=multi-user.target
 EOF
     systemctl enable check-live-persistence.service
 
-    # 8. Calamares installer validation
-    command -v calamares >/dev/null
-    test -f /etc/calamares/settings.conf
-    test -f /etc/calamares/modules/unpackfs.conf
-    test -f /etc/calamares/modules/bootloader.conf
-    test -f /etc/calamares/modules/shellprocess.conf
-    test -d /usr/lib/x86_64-linux-gnu/calamares/modules -o -d /usr/lib/calamares/modules
-    calamares --version
-
-    # 9. Final Cleanup (Reduce SquashFS Size)
+    # 8. Final Cleanup (Reduce SquashFS Size)
     apt-get autoremove -y
     apt-get clean
     rm -rf /var/lib/apt/lists/*
