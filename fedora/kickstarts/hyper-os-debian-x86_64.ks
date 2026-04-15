@@ -1,63 +1,98 @@
 #!/usr/bin/env bash
-# Integrated Hyper OS Debian KDE Builder (Replaces Fedora Kickstart)
+# Hyper OS Architect-Grade Build System
 set -Eeuo pipefail
 
-# --- Configuration ---
-DEBIAN_SUITE="bookworm"
-MIRROR="http://debian.org"
-ROOTFS_DIR="./build/rootfs_kde"
-USERNAME="hyper"
-HOSTNAME="hyperos-kde"
+# --- Configuration & Shared Context ---
+readonly DEBIAN_SUITE="${DEBIAN_SUITE:-bookworm}"
+readonly ROOTFS_DIR="$(pwd)/build/rootfs"
+readonly CACHE_DIR="$(pwd)/build/cache"
+readonly APT_PROXY="${APT_PROXY:-}" # e.g., http://localhost:3142 if using apt-cacher-ng
 
-# Package selection (equivalent to Fedora @kde-desktop-environment)
-CORE_PKGS="linux-image-amd64,systemd-sysv,live-boot,sudo,sddm,plasma-desktop,konsole,dolphin,network-manager,firefox-esr"
-HW_PKGS="fwupd,bolt,thermald,tlp,tlp-rdw,powertop,curl,ca-certificates"
+# Package Sets (Categorized for modularity)
+readonly PKG_CORE="linux-image-amd64,systemd-sysv,live-boot,sudo,bash-completion"
+readonly PKG_UI="plasma-desktop,sddm,konsole,dolphin,network-manager,firefox-esr,pipewire-audio-client-libraries"
+readonly PKG_PERF="tlp,thermald,fwupd,bolt,zram-tools,irqbalance"
 
-log() { printf "\e[32m[hyper-build] %s\e[0m\n" "$*"; }
+log() { printf "\e[1;35m[HYPER-ARCHITECT]\e[0m %s\n" "$*"; }
 
-[[ "$EUID" -ne 0 ]] && { echo "Run as root"; exit 1; }
+# --- Build Engine Stages ---
 
-# 1. Bootstrap Base System
-log "Bootstrapping Debian $DEBIAN_SUITE..."
-mkdir -p "$ROOTFS_DIR"
-debootstrap --variant=minbase --include="$CORE_PKGS,$HW_PKGS" "$DEBIAN_SUITE" "$ROOTFS_DIR" "$MIRROR"
+stage_bootstrap() {
+    log "Stage 1: Bootstrapping via debootstrap..."
+    mkdir -p "$ROOTFS_DIR" "$CACHE_DIR"
+    
+    local opts=(
+        "--variant=minbase"
+        "--include=$PKG_CORE,$PKG_UI,$PKG_PERF"
+        "--arch=amd64"
+    )
+    
+    # Use local proxy if available to save bandwidth
+    [[ -n "$APT_PROXY" ]] && export http_proxy="$APT_PROXY"
 
-# 2. Integrated Post-Install Optimization (Chroot)
-log "Executing internal system tuning..."
-chroot "$ROOTFS_DIR" /usr/bin/env bash  /etc/hostname
-useradd -m -s /bin/bash "$USERNAME"
-echo "$USERNAME:$USERNAME" | chpasswd
-usermod -aG sudo "$USERNAME"
-echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME
+    debootstrap "${opts[@]}" "$DEBIAN_SUITE" "$ROOTFS_DIR" "http://debian.org"
+}
 
-# Networking Tuning Lowest Latency
-cat > /etc/network/interfaces <<EOT
-auto lo
-iface lo inet loopback
-EOT
+stage_configure() {
+    log "Stage 2: Injecting system-level policy..."
+    
+    # Create the internal build script to run inside chroot
+    cat <<'EOF' > "$ROOTFS_DIR/tmp/setup.sh"
+set -e
+export DEBIAN_FRONTEND=noninteractive
 
-# Hyper OS Performance Tuning (Replaces Kickstart %post)
-systemctl enable fstrim.timer thermald.service tlp.service
-systemctl disable apt-daily.service apt-daily.timer apt-daily-upgrade.timer packagekit.service || true
+# 1. Performance Tweak: ZRAM and Swapiness
+echo "ALGO=zstd" > /etc/default/zramswap
+echo "vm.swappiness=10" > /etc/sysctl.d/99-hyper.conf
 
-# Hardware MOTD Setup
-mkdir -p /etc/motd.d
-cat > /etc/motd.d/hyper-os-hardware.txt <<'EOT'
-Hyper-OS (Debian KDE) Hardware Note:
-- For NVIDIA: Add 'non-free-firmware' to sources.list and apt install nvidia-driver.
-- Low Latency: Optimized for TLP and Thermald.
-EOT
+# 2. KDE Plasma Minimal Branding
+mkdir -p /etc/skel/.config
+# Prevent KDE from starting baloo (file indexer) to save CPU/IO
+cat <<KDE > /etc/skel/.config/baloofilerc
+[Basic Settings]
+Indexing-Enabled=false
+KDE
 
-# APT Footprint Reduction
-cat > /etc/apt/apt.conf.d/01-low-bloat <<EOT
-APT::Install-Recommends "0";
-APT::Install-Suggests "0";
-EOT
+# 3. Kernel & Driver Firmware Setup
+# Add non-free-firmware to sources for modern WiFi/GPU support
+sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list
+apt-get update
 
-apt-get update && apt-get autoremove -y && apt-get clean
+# 4. Final Cleanup
+apt-get autoremove -y
+apt-get clean
+rm -rf /var/lib/apt/lists/*
 EOF
 
-# 3. Finalize
-log "System definition complete."
-log "Rootfs location: $ROOTFS_DIR"
-log "Next step: Run build-iso.sh targeting this directory."
+    chmod +x "$ROOTFS_DIR/tmp/setup.sh"
+    chroot "$ROOTFS_DIR" /bin/bash /tmp/setup.sh
+    rm "$ROOTFS_DIR/tmp/setup.sh"
+}
+
+stage_compress() {
+    log "Stage 3: Compressing RootFS into SquashFS..."
+    # High-ratio XZ compression for smaller ISOs
+    # -comp xz: Maximum compression
+    # -Xbcj x86: Optimizes compression for x86 executables
+    mksquashfs "$ROOTFS_DIR" "./build/filesystem.squashfs" \
+        -comp xz -Xbcj x86 -b 1M -noappend
+}
+
+# --- Execution ---
+
+main() {
+    [[ $EUID -ne 0 ]] && { log "ERROR: Root required"; exit 1; }
+    
+    # Start Pipeline
+    stage_bootstrap
+    stage_configure
+    stage_compress
+    
+    log "------------------------------------------------"
+    log "Build Complete!"
+    log "SquashFS: ./build/filesystem.squashfs"
+    log "Ready for ISO wrap (xorriso/grub-mkrescue)"
+    log "------------------------------------------------"
+}
+
+main "$@"
