@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "${1:-}" == "--auto" && -f /etc/hyperos-disable-installer-autostart ]]; then
+  exit 0
+fi
+
+if pgrep -x calamares >/dev/null 2>&1; then
+  exit 0
+fi
+
+if [[ "$EUID" -eq 0 ]]; then
+  exec calamares
+fi
+
+if command -v pkexec >/dev/null 2>&1; then
+  exec pkexec calamares
+fi
+
+exec sudo -E calamares

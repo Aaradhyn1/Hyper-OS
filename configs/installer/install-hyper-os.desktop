@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install Hyper OS
+Comment=Install Hyper OS to disk
+Exec=/usr/local/bin/hyperos-installer
+Icon=calamares
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true

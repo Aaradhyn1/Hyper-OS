@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ ! -f /home/hyper/.config/openbox/autostart ]]; then
+  install -d -m 0755 -o hyper -g hyper /home/hyper/.config/openbox
+  cp /etc/xdg/openbox/autostart /home/hyper/.config/openbox/autostart
+  chown hyper:hyper /home/hyper/.config/openbox/autostart
+fi

@@ -27,9 +27,15 @@ terminal_input serial console
 terminal_output serial console
 
 menuentry "Hyper OS (Live Performance Mode)" {
-  linux /live/vmlinuz boot=live components quiet splash noeject toram persistence \
+  linux /live/vmlinuz boot=live components quiet splash noeject toram \
         elevator=noop intel_idle.max_cstate=1 processor.max_cstate=1 \
         mitigations=off fsck.mode=force fsck.repair=yes
+  initrd /live/initrd.img
+}
+
+menuentry "Hyper OS (Persistence Mode)" {
+  linux /live/vmlinuz boot=live components persistence persistence-label=HYPER_PERSIST \
+        quiet splash noeject
   initrd /live/initrd.img
 }
 
@@ -44,6 +50,20 @@ menuentry "Hyper OS (Hardware Detection/Safe Mode)" {
   initrd /live/initrd.img
 }
 GRUBCFG
+}
+
+validate_initramfs_persistence_support() {
+  local initrd_path="$1"
+
+  if ! command -v lsinitramfs >/dev/null 2>&1; then
+    log WARN "lsinitramfs not available on builder host; skipping initrd persistence hook validation"
+    return 0
+  fi
+
+  log INFO "Validating initramfs live-boot persistence hooks"
+  if ! lsinitramfs "$initrd_path" | grep -Eq '^scripts/live|/live-boot/'; then
+    die "initrd is missing live-boot persistence hooks. Ensure live-boot is installed in rootfs and initramfs is regenerated."
+  fi
 }
 
 # --- Intelligent SquashFS Sorting ---
@@ -84,6 +104,7 @@ main() {
   initrd_path=$(ls -v "$ROOTFS_DIR/boot/initrd.img-"* | tail -n1)
   
   [[ -f "$kernel_path" && -f "$initrd_path" ]] || die "Kernel/Initrd discovery failed."
+  validate_initramfs_persistence_support "$initrd_path"
 
   # --- Advanced RootFS Sanitization ---
   log INFO "Sanitizing RootFS (Machine IDs, Logs, Temp)"
