@@ -9,7 +9,7 @@ DEBIAN_SUITE="${DEBIAN_SUITE:-bookworm}"
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-http://deb.debian.org/debian}"
 # Core packages for a functional low-latency live system
 CORE_PKGS="linux-image-amd64,live-boot,systemd-sysv,sudo,network-manager,iproute2,pciutils,kmod,zstd"
-
+ 
 main() {
   use_shared_logging
   require_root
