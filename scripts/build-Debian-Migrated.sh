@@ -1,77 +1,113 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# --- Migrated Configuration ---
+# --- Advanced Configuration ---
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build/debian-live}"
-OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/out}"
-IMAGE_NAME="${IMAGE_NAME:-Hyper-OS-Debian-KDE}"
-DEBIAN_SUITE="${DEBIAN_SUITE:-bookworm}"
+BUILD_DIR="${ROOT_DIR}/build"
+CONFIG_DIR="${ROOT_DIR}/config"
+OUTPUT_DIR="${ROOT_DIR}/out"
 
-log() { printf "\e[34m[hyper-migrate] [%s] %s\e[0m\n" "$(date '+%H:%M:%S')" "$1"; }
+# OS Metadata
+IMAGE_NAME="Hyper-OS-$(date +%Y%m%d)"
+DISTRO="debian"
+RELEASE="bookworm"
+ARCH="amd64"
 
-require_root() {
-    [[ "$EUID" -eq 0 ]] || { log "ERROR: Root required (sudo ./build.sh)"; exit 1; }
+# Logging Utility
+log() {
+    local type=$1; shift
+    local color="\e[32m" # Green
+    [[ "$type" == "ERR" ]] && color="\e[31m" # Red
+    printf "${color}[%s] [%s] %s\e[0m\n" "$(date +%H:%M:%S)" "$type" "$*"
 }
 
-# --- Core Build Logic ---
-setup_lb_config() {
-    log "Configuring Live-Build for $DEBIAN_SUITE..."
+# --- Build Modules ---
+
+cleanup() {
+    log INFO "Cleaning up build environment..."
+    cd "$BUILD_DIR" && lb clean --purge
+}
+
+setup_structure() {
+    log INFO "Initializing Live-Build structure..."
     mkdir -p "$BUILD_DIR" && cd "$BUILD_DIR"
     
-    # Initialize basic live-build structure
     lb config \
-        --distribution "$DEBIAN_SUITE" \
-        --debian-installer none \
+        --distribution "$RELEASE" \
         --archive-areas "main contrib non-free non-free-firmware" \
+        --debian-installer live \
+        --debian-installer-distribution "$RELEASE" \
+        --cache true \
+        --apt-indices false \
         --apt-recommends false \
-        --linux-flavours amd64 \
+        --debootstrap-options "--variant=minbase" \
+        --bootappend-live "boot=live components quiet splash loglevel=3 udev.log_priority=3" \
         --image-name "$IMAGE_NAME"
-
-    # 1. Package Migration (Equivalent to %packages)
-    log "Injecting migrated package lists..."
-    mkdir -p config/package-lists
-    cat > config/package-lists/hyper-os.list.chroot <<EOF
-kde-standard plasma-desktop sddm
-network-manager firefox-esr sudo curl
-fwupd bolt thermald tlp tlp-rdw powertop
-EOF
-
-    # 2. Optimization Migration (Equivalent to %post)
-    log "Injecting performance hooks..."
-    mkdir -p config/hooks/live
-cat > config/hooks/live/99-hyper-optimize.chroot <<'EOF'
-#!/bin/sh
-set -eu
-# Applied from previously discussed optimizations
-mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/timers.target.wants
-ln -snf /lib/systemd/system/thermald.service /etc/systemd/system/multi-user.target.wants/thermald.service
-ln -snf /lib/systemd/system/tlp.service /etc/systemd/system/multi-user.target.wants/tlp.service
-ln -snf /lib/systemd/system/fstrim.timer /etc/systemd/system/timers.target.wants/fstrim.timer
-for unit in apt-daily.service apt-daily.timer packagekit.service; do
-  ln -snf /dev/null "/etc/systemd/system/$unit"
-done
-passwd -l root
-EOF
-    chmod +x config/hooks/live/99-hyper-optimize.chroot
 }
 
-main() {
-    require_root
-    
-    if ! command -v lb >/dev/null; then
-        log "Installing live-build dependencies..."
-        apt-get update && apt-get install -y live-build debootstrap
-    fi
+inject_packages() {
+    log INFO "Adding Core, KDE, and Performance packages..."
+    local PKG_LIST="config/package-lists/hyper.list.chroot"
+    mkdir -p "$(dirname "$PKG_LIST")"
 
-    setup_lb_config
+    cat <<EOF > "$PKG_LIST"
+# Desktop Environment
+kde-standard plasma-nm sddm
+# Installer & System
+calamares-settings-debian calamares
+# Power & Hardware
+tlp tlp-rdw thermald fwupd bolt smartmontools fstrim
+# Performance
+zram-tools pipewire-audio-client-libraries
+# Utilities
+sudo curl wget nano micro htop
+EOF
+}
+
+inject_customizations() {
+    log INFO "Applying system-level optimizations..."
+    local HOOK="config/hooks/live/99-performance.chroot"
+    mkdir -p "$(dirname "$HOOK")"
+
+    cat <<'EOF' > "$HOOK"
+#!/bin/sh
+set -e
+# Enable ZRAM for better memory management
+echo "ALGO=zstd" >> /etc/default/zramswap
+echo "PERCENT=60" >> /etc/default/zramswap
+
+# Low Latency Tuning
+echo "vm.swappiness=10" > /etc/sysctl.d/99-hyper.conf
+echo "vm.vfs_cache_pressure=50" >> /etc/sysctl.d/99-hyper.conf
+
+# Disable annoying system beeps and bloat services
+rm -f /etc/apt/apt.conf.d/10periodic
+systemctl enable tlp
+systemctl enable thermald
+EOF
+    chmod +x "$HOOK"
+}
+
+# --- Main Execution ---
+
+main() {
+    [[ $EUID -ne 0 ]] && { log ERR "Root required"; exit 1; }
+
+    # Pre-flight checks
+    command -v lb >/dev/null || apt-get install -y live-build debootstrap
+
+    # Execute Pipeline
+    setup_structure
+    inject_packages
+    inject_customizations
     
-    log "Starting ISO construction..."
-    lb build
-    
+    log INFO "Starting ISO build (this may take a while)..."
+    lb build 2>&1 | tee "$ROOT_DIR/build.log"
+
+    # Export
     mkdir -p "$OUTPUT_DIR"
     mv *.iso "$OUTPUT_DIR/${IMAGE_NAME}.iso"
-    log "Build Complete: $OUTPUT_DIR/${IMAGE_NAME}.iso"
+    log INFO "Build success: $OUTPUT_DIR/${IMAGE_NAME}.iso"
 }
 
 main "$@"
