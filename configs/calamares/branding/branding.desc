@@ -1,0 +1,21 @@
+---
+componentName: hyperos
+welcomeStyleCalamares: true
+welcomeExpandingLogo: false
+windowExpanding: false
+windowSize: 900px,520px
+sidebarBackground: "#1b1e24"
+sidebarText: "#f5f7fa"
+sidebarTextSelect: "#6ec1ff"
+style:
+  sidebarBackground: "#1b1e24"
+  sidebarText: "#f5f7fa"
+  sidebarTextSelect: "#6ec1ff"
+strings:
+  productName: "Hyper OS"
+  shortProductName: "Hyper OS"
+  version: "rolling"
+  shortVersion: "rolling"
+  versionedName: "Hyper OS rolling"
+  shortVersionedName: "Hyper OS rolling"
+  bootloaderEntryName: "Hyper OS"

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Hyper OS Installer Autostart
+Comment=Launch Hyper OS installer on live boot
+Exec=/usr/local/bin/hyperos-installer --auto
+Icon=calamares
+Terminal=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
