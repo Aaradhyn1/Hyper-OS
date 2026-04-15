@@ -53,8 +53,13 @@ for unit in "${TARGET_UNITS[@]}"; do
         # Check if it's currently running/enabled
         if systemctl is-enabled "$unit" >/dev/null 2>&1; then
             log "Action: Purging $unit"
-            run_cmd systemctl disable --now "$unit" || true
-            run_cmd systemctl mask "$unit" || true
+            if [[ "$DRY_RUN" == "1" ]]; then
+                run_cmd systemctl disable --now "$unit"
+                run_cmd systemctl mask "$unit"
+            else
+                systemctl disable --now "$unit"
+                systemctl mask "$unit"
+            fi
         fi
     else
         log "Skipping (Protected or Missing): $unit"

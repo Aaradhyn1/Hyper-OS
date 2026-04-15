@@ -40,12 +40,18 @@ EOF
     # 2. Optimization Migration (Equivalent to %post)
     log "Injecting performance hooks..."
     mkdir -p config/hooks/live
-    cat > config/hooks/live/99-hyper-optimize.chroot <<'EOF'
+cat > config/hooks/live/99-hyper-optimize.chroot <<'EOF'
 #!/bin/sh
+set -eu
 # Applied from previously discussed optimizations
-systemctl enable fstrim.timer thermald.service tlp.service
-systemctl disable apt-daily.service apt-daily.timer packagekit.service
-echo "hyper:hyper" | chpasswd
+mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/timers.target.wants
+ln -snf /lib/systemd/system/thermald.service /etc/systemd/system/multi-user.target.wants/thermald.service
+ln -snf /lib/systemd/system/tlp.service /etc/systemd/system/multi-user.target.wants/tlp.service
+ln -snf /lib/systemd/system/fstrim.timer /etc/systemd/system/timers.target.wants/fstrim.timer
+for unit in apt-daily.service apt-daily.timer packagekit.service; do
+  ln -snf /dev/null "/etc/systemd/system/$unit"
+done
+passwd -l root
 EOF
     chmod +x config/hooks/live/99-hyper-optimize.chroot
 }

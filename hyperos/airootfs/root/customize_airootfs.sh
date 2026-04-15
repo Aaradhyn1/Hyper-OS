@@ -9,9 +9,19 @@ locale-gen
 echo 'LANG=en_US.UTF-8' > /etc/locale.conf
 
 useradd -m -G wheel,audio,video -s /bin/bash hyper
-printf 'hyper:hyper\n' | chpasswd
+passwd -l hyper
+passwd -l root
 
 chmod 0440 /etc/sudoers.d/wheel
+
+enable_unit() {
+  local unit="$1"
+  local wants_dir="/etc/systemd/system/multi-user.target.wants"
+  local unit_path="/usr/lib/systemd/system/$unit"
+  mkdir -p "$wants_dir"
+  [[ -f "$unit_path" ]] || { echo "Missing unit file: $unit" >&2; exit 1; }
+  ln -snf "$unit_path" "$wants_dir/$unit"
+}
 
 cat > /etc/systemd/system/hyper-firstboot.service <<'UNIT'
 [Unit]
@@ -27,7 +37,7 @@ RemainAfterExit=true
 WantedBy=multi-user.target
 UNIT
 
-systemctl enable NetworkManager.service
-systemctl enable lightdm.service
-systemctl enable hyper-firstboot.service
-systemctl set-default graphical.target
+enable_unit NetworkManager.service
+enable_unit lightdm.service
+ln -snf /etc/systemd/system/hyper-firstboot.service /etc/systemd/system/multi-user.target.wants/hyper-firstboot.service
+ln -snf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
