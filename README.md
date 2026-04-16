@@ -8,7 +8,7 @@ sudo ./build.sh
 
 This one command builds everything and outputs `hyperos.iso`.
 
-## What `build.sh` does
+## What `build.sh` does 
 
 1. Checks dependencies
 2. Prepares a clean rebuild workspace
