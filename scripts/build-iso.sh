@@ -1,168 +1,257 @@
 #!/usr/bin/env bash
+# Hyper OS - Final Build Pipeline
 set -Eeuo pipefail
 
-# --- Enhanced Path Handling & Configuration ---
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/build-common.sh"
+# =========================
+# Global Config
+# =========================
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly BUILD_DIR="$SCRIPT_DIR/build"
+readonly ROOTFS_DIR="$BUILD_DIR/rootfs"
+readonly ISO_DIR="$BUILD_DIR/iso"
+readonly OUT_DIR="$BUILD_DIR/out"
 
-# Performance Tuning Constants
-ZSTD_LEVEL=19         # Higher for smaller ISOs, 15-19 is the sweet spot for Zstd
-BLOCK_SIZE="1M"       # Larger blocks improve compression ratio for OS files
-SQUASH_MEM="85%"      # Use up to 85% of RAM for mksquashfs speed
+readonly ISO_NAME="hyperos"
+readonly ISO_LABEL="HYPER_OS_$(date +%Y%m%d)"
+readonly ISO_PATH="$OUT_DIR/${ISO_NAME}.iso"
 
-DEBUG_MODE=0
+readonly ARCH="amd64"
+readonly DEBIAN_SUITE="${DEBIAN_SUITE:-bookworm}"
+readonly ZSTD_LEVEL="${ZSTD_LEVEL:-17}"
+readonly BLOCK_SIZE="1M"
+readonly SQUASH_MEM="80%"
 
-# --- Advanced GRUB: Added Persistence & Serial Support ---
-build_grub_cfg() {
-  log INFO "Generating Advanced GRUB Configuration"
-  cat > "$ISO_DIR/boot/grub/grub.cfg" <<'GRUBCFG'
-set default=0
-set timeout=5
-set gfxmode=auto
-insmod all_video
+# =========================
+# Logging
+# =========================
+log()   { printf "\e[1;34m[INFO]\e[0m %s\n" "$*"; }
+warn()  { printf "\e[1;33m[WARN]\e[0m %s\n" "$*" >&2; }
+die()   { printf "\e[1;31m[FATAL]\e[0m %s\n" "$*" >&2; exit 1; }
 
-# Serial console support for headless debugging
-serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1
-terminal_input serial console
-terminal_output serial console
+# =========================
+# Safety & Cleanup
+# =========================
+cleanup() {
+    log "Cleaning mounts..."
+    mount | grep "$ROOTFS_DIR" | awk '{print $3}' | xargs -r umount -lf || true
+}
+trap cleanup EXIT
 
-menuentry "Hyper OS (Live Performance Mode)" {
-  linux /live/vmlinuz boot=live components quiet splash noeject toram \
-        elevator=noop intel_idle.max_cstate=1 processor.max_cstate=1 \
-        fsck.repair=yes
-  initrd /live/initrd.img
+require_root() {
+    [[ $EUID -eq 0 ]] || die "Run as root."
 }
 
-menuentry "Hyper OS (Persistence Mode)" {
-  linux /live/vmlinuz boot=live components persistence persistence-label=HYPER_PERSIST \
-        quiet splash noeject
-  initrd /live/initrd.img
+require_cmds() {
+    for cmd in "$@"; do
+        command -v "$cmd" >/dev/null || die "Missing dependency: $cmd"
+    done
 }
 
-menuentry "Hyper OS (Persistence Fallback: read-only live session)" {
-  linux /live/vmlinuz boot=live components nopersistence quiet splash noeject
-  initrd /live/initrd.img
+prepare_dirs() {
+    mkdir -p "$ROOTFS_DIR" "$ISO_DIR"/{boot/grub,live} "$OUT_DIR"
 }
 
-menuentry "Hyper OS (Live Standard)" {
-  linux /live/vmlinuz boot=live components quiet splash noeject
-  initrd /live/initrd.img
+clean() {
+    log "Cleaning build directory..."
+    rm -rf "$BUILD_DIR"
 }
 
-menuentry "Hyper OS (Hardware Detection/Safe Mode)" {
-  linux /live/vmlinuz boot=live components noapic nolapic nomodeset noeject \
-        irqpoll maxcpus=1 xforcevesa
-  initrd /live/initrd.img
-}
-GRUBCFG
-}
+# =========================
+# Stage 1: Bootstrap
+# =========================
+stage_bootstrap() {
+    log "Bootstrapping Debian ($DEBIAN_SUITE)..."
 
-validate_initramfs_persistence_support() {
-  local initrd_path="$1"
+    [[ -d "$ROOTFS_DIR/bin" ]] && {
+        warn "RootFS exists, skipping bootstrap"
+        return
+    }
 
-  if ! command -v lsinitramfs >/dev/null 2>&1; then
-    log WARN "lsinitramfs not available on builder host; skipping initrd persistence hook validation"
-    return 0
-  fi
-
-  log INFO "Validating initramfs live-boot persistence hooks"
-  if ! lsinitramfs "$initrd_path" | grep -Eq '^scripts/live|/live-boot/'; then
-    die "initrd is missing live-boot persistence hooks. Ensure live-boot is installed in rootfs and initramfs is regenerated."
-  fi
+    debootstrap \
+        --variant=minbase \
+        --arch="$ARCH" \
+        --include="linux-image-amd64,systemd-sysv,live-boot,sudo,plasma-desktop,sddm,network-manager" \
+        "$DEBIAN_SUITE" "$ROOTFS_DIR" "http://deb.debian.org/debian"
 }
 
-validate_iso_boot_artifacts() {
-  local iso_path="$1"
-  log INFO "Validating ISO UEFI/BIOS boot artifacts"
+# =========================
+# Stage 2: Configure
+# =========================
+stage_configure() {
+    log "Configuring system..."
 
-  xorriso -indev "$iso_path" -find /EFI/BOOT/BOOTX64.EFI -print -quit | grep -q '/EFI/BOOT/BOOTX64.EFI' \
-    || die "Missing UEFI fallback loader: /EFI/BOOT/BOOTX64.EFI"
+    mount --bind /dev  "$ROOTFS_DIR/dev"
+    mount --bind /proc "$ROOTFS_DIR/proc"
+    mount --bind /sys  "$ROOTFS_DIR/sys"
 
-  local eltorito_report
-  eltorito_report="$(xorriso -indev "$iso_path" -report_el_torito plain 2>/dev/null || true)"
-  grep -qi 'platform id[[:space:]]*:[[:space:]]*0x00' <<<"$eltorito_report" \
-    || die "Missing El Torito BIOS boot image (platform 0x00)"
-  grep -qi 'platform id[[:space:]]*:[[:space:]]*0xef' <<<"$eltorito_report" \
-    || die "Missing El Torito EFI boot image (platform 0xEF)"
-}
+    cat <<'EOF' > "$ROOTFS_DIR/tmp/setup.sh"
+set -e
+export DEBIAN_FRONTEND=noninteractive
 
-# --- Intelligent SquashFS Sorting ---
-# Groups critical boot files at the start of the image to reduce seek time
-generate_sort_file() {
-  local sort_file="$BUILD_DIR/squashfs-sort.txt"
-  log INFO "Generating predictive I/O sort file"
-  cat > "$sort_file" <<EOF
-boot/* 32767
-lib/modules/*/kernel/drivers/gpu/* 30000
-lib/systemd/* 28000
-usr/lib/systemd/* 28000
-bin/* 25000
-sbin/* 25000
-lib/* 20000
-usr/bin/* 15000
-usr/sbin/* 15000
+# Firmware support
+sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list
+apt-get update
+apt-get install -y firmware-linux firmware-linux-nonfree
+
+# Performance tweaks
+echo "vm.swappiness=10" > /etc/sysctl.d/99-hyper.conf
+echo "ALGO=zstd" > /etc/default/zramswap
+
+# KDE optimization
+mkdir -p /etc/skel/.config
+echo -e "[Basic Settings]\nIndexing-Enabled=false" > /etc/skel/.config/baloofilerc
+
+# Cleanup
+apt-get autoremove -y
+apt-get clean
+rm -rf /var/lib/apt/lists/*
 EOF
+
+    chmod +x "$ROOTFS_DIR/tmp/setup.sh"
+    chroot "$ROOTFS_DIR" /bin/bash /tmp/setup.sh
+    rm "$ROOTFS_DIR/tmp/setup.sh"
 }
 
+# =========================
+# Stage 3: Sanitize
+# =========================
+stage_sanitize() {
+    log "Sanitizing rootfs..."
+
+    truncate -s 0 "$ROOTFS_DIR/etc/machine-id" || true
+    rm -f "$ROOTFS_DIR/var/lib/dbus/machine-id"
+
+    rm -rf "$ROOTFS_DIR/tmp/"*
+    rm -rf "$ROOTFS_DIR/var/tmp/"*
+    rm -rf "$ROOTFS_DIR/var/log/"*
+    rm -rf "$ROOTFS_DIR/root/"*
+
+    rm -f "$ROOTFS_DIR/etc/hostname"
+    rm -f "$ROOTFS_DIR/etc/resolv.conf"
+}
+
+# =========================
+# Stage 4: SquashFS
+# =========================
+stage_squashfs() {
+    log "Creating SquashFS..."
+
+    local squash="$ISO_DIR/live/filesystem.squashfs"
+
+    mksquashfs "$ROOTFS_DIR" "$squash" \
+        -comp zstd -Xcompression-level "$ZSTD_LEVEL" \
+        -b "$BLOCK_SIZE" -mem "$SQUASH_MEM" \
+        -processors "$(nproc)" \
+        -noappend -always-use-fragments
+
+    [[ -f "$squash" ]] || die "SquashFS creation failed"
+}
+
+# =========================
+# Stage 5: Kernel + GRUB
+# =========================
+stage_bootloader() {
+    log "Setting up bootloader..."
+
+    local kernel initrd
+
+    kernel="$(find "$ROOTFS_DIR/boot" -name 'vmlinuz-*' | sort -V | tail -n1)"
+    initrd="$(find "$ROOTFS_DIR/boot" -name 'initrd.img-*' | sort -V | tail -n1)"
+
+    [[ -f "$kernel" ]] || die "Kernel not found"
+    [[ -f "$initrd" ]] || die "Initrd not found"
+
+    cp "$kernel" "$ISO_DIR/live/vmlinuz"
+    cp "$initrd" "$ISO_DIR/live/initrd.img"
+
+    cat > "$ISO_DIR/boot/grub/grub.cfg" <<'GRUB'
+set timeout=5
+set default=0
+
+menuentry "Hyper OS (Live)" {
+  linux /live/vmlinuz boot=live components quiet splash
+  initrd /live/initrd.img
+}
+
+menuentry "Hyper OS (Persistence)" {
+  linux /live/vmlinuz boot=live persistence persistence-label=HYPER_PERSIST quiet splash
+  initrd /live/initrd.img
+}
+GRUB
+}
+
+# =========================
+# Stage 6: ISO Build
+# =========================
+stage_iso() {
+    log "Building ISO..."
+
+    grub-mkrescue -o "$ISO_PATH" "$ISO_DIR" \
+        -- -volid "$ISO_LABEL" \
+        -preparer "HyperOS" \
+        -publisher "HyperOS"
+
+    [[ -f "$ISO_PATH" ]] || die "ISO build failed"
+}
+
+# =========================
+# Stage 7: Verify
+# =========================
+stage_verify() {
+    log "Verifying ISO..."
+
+    sha256sum "$ISO_PATH" > "$ISO_PATH.sha256"
+
+    xorriso -indev "$ISO_PATH" -find /EFI/BOOT/BOOTX64.EFI -quit >/dev/null \
+        || die "UEFI boot missing"
+
+    log "ISO ready: $ISO_PATH"
+}
+
+# =========================
+# Stage 8: Test (QEMU)
+# =========================
+stage_test() {
+    log "Launching QEMU test..."
+
+    qemu-system-x86_64 \
+        -m 2048 \
+        -cdrom "$ISO_PATH" \
+        -boot d \
+        -enable-kvm || warn "QEMU test failed"
+}
+
+# =========================
+# CLI
+# =========================
 main() {
-  parse_args "$@"
-  [[ "$DEBUG_MODE" -eq 1 ]] && set -x
+    require_root
+    require_cmds debootstrap mksquashfs grub-mkrescue xorriso qemu-system-x86_64
 
-  use_shared_logging
-  require_root
-  require_cmds grub-mkrescue xorriso mksquashfs zstd nproc
-
-  validate_build_inputs
-
-  log INFO "Syncing ISO tree and cleaning artifacts"
-  rm -rf "$ISO_DIR"
-  mkdir -p "$ISO_DIR/boot/grub" "$ISO_DIR/live"
-
-  # Find latest kernel/initrd with a fallback check
-  local kernel_path initrd_path
-  kernel_path=$(ls -v "$ROOTFS_DIR/boot/vmlinuz-"* | tail -n1)
-  initrd_path=$(ls -v "$ROOTFS_DIR/boot/initrd.img-"* | tail -n1)
-  
-  [[ -f "$kernel_path" && -f "$initrd_path" ]] || die "Kernel/Initrd discovery failed."
-  validate_initramfs_persistence_support "$initrd_path"
-
-  # --- Advanced RootFS Sanitization ---
-  log INFO "Sanitizing RootFS (Machine IDs, Logs, Temp)"
-  [[ -f "$ROOTFS_DIR/etc/machine-id" ]] && truncate -s 0 "$ROOTFS_DIR/etc/machine-id"
-  rm -f "$ROOTFS_DIR/var/lib/dbus/machine-id"
-  find "$ROOTFS_DIR/var/log" -type f -delete
-  find "$ROOTFS_DIR/root/" -mindepth 1 -delete
-
-  verify_rootfs_mount_safety
-  generate_sort_file
-
-  # --- High-Performance SquashFS Compression ---
-  log INFO "Building SquashFS with Zstd (Level: $ZSTD_LEVEL)"
-  mksquashfs "$ROOTFS_DIR" "$ISO_DIR/live/filesystem.squashfs" \
-    -e boot proc sys dev run tmp var/tmp .build_info \
-    -comp zstd -Xcompression-level "$ZSTD_LEVEL" \
-    -b "$BLOCK_SIZE" -mem "$SQUASH_MEM" \
-    -sort "$BUILD_DIR/squashfs-sort.txt" \
-    -processors "$(nproc)" \
-    -noappend -always-use-fragments
-
-  # Generate checksums for the live environment to verify at boot
-  cd "$ISO_DIR" && find . -type f -not -path './boot/*' -exec md5sum {} + > live/filesystem.packages.md5sum
-  
-  cp "$kernel_path" "$ISO_DIR/live/vmlinuz"
-  cp "$initrd_path" "$ISO_DIR/live/initrd.img"
-  build_grub_cfg
-
-  # --- Hybrid ISO Generation ---
-  log INFO "Finalizing Hybrid BIOS/UEFI ISO"
-  grub-mkrescue -o "$ISO_PATH" "$ISO_DIR" \
-    -- -volid "HYPER_OS_$(date +%Y%m%d)" \
-    -preparer "HyperOS-Builder" \
-    -publisher "YourName"
-
-  validate_iso_boot_artifacts "$ISO_PATH"
-
-  log INFO "Build Successful: $ISO_PATH"
+    case "${1:-build}" in
+        clean) clean ;;
+        build)
+            prepare_dirs
+            stage_bootstrap
+            stage_configure
+            stage_sanitize
+            stage_squashfs
+            stage_bootloader
+            stage_iso
+            stage_verify
+            ;;
+        test)
+            stage_test
+            ;;
+        rebuild)
+            clean
+            "$0" build
+            ;;
+        *)
+            echo "Usage: $0 [build|clean|rebuild|test]"
+            exit 1
+            ;;
+    esac
 }
 
 main "$@"
