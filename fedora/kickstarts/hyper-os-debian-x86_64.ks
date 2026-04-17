@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hyper OS Architect-Grade Build System v2
+# Hyper OS Architect-Grade Build System v3 (Hardened)
 set -Eeuo pipefail
 
 # =========================
@@ -16,7 +16,7 @@ readonly ARCH="amd64"
 readonly APT_PROXY="${APT_PROXY:-}"
 
 readonly PKG_CORE="linux-image-amd64,systemd-sysv,live-boot,sudo,bash-completion"
-readonly PKG_UI="plasma-desktop,sddm,konsole,dolphin,network-manager,firefox-esr,pipewire-audio-client-libraries"
+readonly PKG_UI="plasma-desktop,sddm,konsole,dolphin,network-manager,firefox-esr,pipewire wireplumber"
 readonly PKG_PERF="tlp,thermald,fwupd,bolt,zram-tools,irqbalance"
 
 # =========================
@@ -24,14 +24,16 @@ readonly PKG_PERF="tlp,thermald,fwupd,bolt,zram-tools,irqbalance"
 # =========================
 log()   { printf "\e[1;34m[INFO]\e[0m %s\n" "$*"; }
 warn()  { printf "\e[1;33m[WARN]\e[0m %s\n" "$*" >&2; }
-error() { printf "\e[1;31m[ERROR]\e[0m %s\n" "$*" >&2; exit 1; }
+die()   { printf "\e[1;31m[FATAL]\e[0m %s\n" "$*" >&2; exit 1; }
 
 # =========================
-# Cleanup & Trap
+# Cleanup
 # =========================
 cleanup() {
-    log "Cleaning up mounts..."
-    mount | grep "$ROOTFS_DIR" | awk '{print $3}' | xargs -r umount -lf || true
+    log "Unmounting chroot..."
+    for m in dev proc sys; do
+        mountpoint -q "$ROOTFS_DIR/$m" && umount -lf "$ROOTFS_DIR/$m" || true
+    done
 }
 trap cleanup EXIT
 
@@ -39,13 +41,13 @@ trap cleanup EXIT
 # Utilities
 # =========================
 require_root() {
-    [[ $EUID -eq 0 ]] || error "Run as root."
+    [[ $EUID -eq 0 ]] || die "Run as root."
 }
 
 check_deps() {
-    local deps=(debootstrap mksquashfs chroot)
+    local deps=(debootstrap mksquashfs chroot mount umount)
     for dep in "${deps[@]}"; do
-        command -v "$dep" >/dev/null || error "Missing dependency: $dep"
+        command -v "$dep" >/dev/null || die "Missing dependency: $dep"
     done
 }
 
@@ -54,7 +56,7 @@ prepare_dirs() {
 }
 
 clean() {
-    log "Nuking build directory..."
+    log "Cleaning build directory..."
     rm -rf "$BUILD_DIR"
 }
 
@@ -62,10 +64,10 @@ clean() {
 # Stage 1: Bootstrap
 # =========================
 stage_bootstrap() {
-    log "Stage 1: Bootstrap ($DEBIAN_SUITE)..."
+    log "Bootstrapping Debian ($DEBIAN_SUITE)..."
 
     [[ -d "$ROOTFS_DIR/bin" ]] && {
-        warn "RootFS already exists. Skipping bootstrap."
+        warn "RootFS exists, skipping bootstrap"
         return
     }
 
@@ -75,21 +77,24 @@ stage_bootstrap() {
         --variant=minbase \
         --arch="$ARCH" \
         --include="$PKG_CORE,$PKG_UI,$PKG_PERF" \
-        "$DEBIAN_SUITE" "$ROOTFS_DIR" "http://deb.debian.org/debian"
+        "$DEBIAN_SUITE" "$ROOTFS_DIR" "https://deb.debian.org/debian"
 }
 
 # =========================
 # Stage 2: Configure
 # =========================
 stage_configure() {
-    log "Stage 2: System Configuration..."
+    log "Configuring system..."
 
     mount --bind /dev  "$ROOTFS_DIR/dev"
     mount --bind /proc "$ROOTFS_DIR/proc"
     mount --bind /sys  "$ROOTFS_DIR/sys"
 
+    # Fix DNS inside chroot
+    cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
+
     cat <<'EOF' > "$ROOTFS_DIR/tmp/setup.sh"
-set -e
+set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 echo "[HYPER] Applying performance policies..."
@@ -105,10 +110,13 @@ cat <<KDE > /etc/skel/.config/baloofilerc
 Indexing-Enabled=false
 KDE
 
-# Firmware Support
+# Firmware
 sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list
 apt-get update
 apt-get install -y firmware-linux firmware-linux-nonfree
+
+# Reset machine-id
+truncate -s 0 /etc/machine-id
 
 # Cleanup
 apt-get autoremove -y
@@ -125,12 +133,15 @@ EOF
 # Stage 3: Compress
 # =========================
 stage_compress() {
-    log "Stage 3: SquashFS Compression..."
+    log "Creating SquashFS..."
 
     local out="$OUT_DIR/filesystem.squashfs"
 
     mksquashfs "$ROOTFS_DIR" "$out" \
-        -comp xz -Xbcj x86 -b 1M -noappend
+        -comp zstd -Xcompression-level 17 \
+        -b 1M -noappend -processors "$(nproc)"
+
+    [[ -f "$out" ]] || die "SquashFS failed"
 
     log "SquashFS created: $out"
 }
@@ -139,16 +150,16 @@ stage_compress() {
 # Stage 4: Verify
 # =========================
 stage_verify() {
-    log "Stage 4: Verifying artifact..."
+    log "Verifying artifact..."
 
     local file="$OUT_DIR/filesystem.squashfs"
 
-    [[ -f "$file" ]] || error "Build failed: SquashFS missing"
+    [[ -f "$file" ]] || die "Missing SquashFS"
 
-    du -h "$file"
-    file "$file"
+    sha256sum "$file" > "$file.sha256"
 
-    log "Verification passed."
+    log "Size: $(du -h "$file" | cut -f1)"
+    log "Checksum generated."
 }
 
 # =========================
@@ -159,9 +170,7 @@ main() {
     check_deps
 
     case "${1:-build}" in
-        clean)
-            clean
-            ;;
+        clean) clean ;;
         build)
             prepare_dirs
             stage_bootstrap
@@ -171,11 +180,7 @@ main() {
             ;;
         rebuild)
             clean
-            prepare_dirs
-            stage_bootstrap
-            stage_configure
-            stage_compress
-            stage_verify
+            "$0" build
             ;;
         *)
             echo "Usage: $0 [build|clean|rebuild]"
