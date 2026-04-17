@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hyper OS - Final Build Pipeline
+# Hyper OS - Ultimate Build Pipeline (Final)
 set -Eeuo pipefail
 
 # =========================
@@ -29,14 +29,17 @@ warn()  { printf "\e[1;33m[WARN]\e[0m %s\n" "$*" >&2; }
 die()   { printf "\e[1;31m[FATAL]\e[0m %s\n" "$*" >&2; exit 1; }
 
 # =========================
-# Safety & Cleanup
+# Cleanup (Reverse Unmount)
 # =========================
 cleanup() {
     log "Cleaning mounts..."
-    mount | grep "$ROOTFS_DIR" | awk '{print $3}' | xargs -r umount -lf || true
+    tac < <(mount | grep "$ROOTFS_DIR" | awk '{print $3}') | xargs -r umount -lf || true
 }
 trap cleanup EXIT
 
+# =========================
+# Preconditions
+# =========================
 require_root() {
     [[ $EUID -eq 0 ]] || die "Run as root."
 }
@@ -48,7 +51,7 @@ require_cmds() {
 }
 
 prepare_dirs() {
-    mkdir -p "$ROOTFS_DIR" "$ISO_DIR"/{boot/grub,live} "$OUT_DIR"
+    mkdir -p "$ROOTFS_DIR" "$ISO_DIR/boot/grub" "$ISO_DIR/live" "$OUT_DIR"
 }
 
 clean() {
@@ -80,15 +83,20 @@ stage_bootstrap() {
 stage_configure() {
     log "Configuring system..."
 
-    mount --bind /dev  "$ROOTFS_DIR/dev"
+    mkdir -p "$ROOTFS_DIR/tmp"
+
+    mount --bind /dev "$ROOTFS_DIR/dev"
+    mount --bind /dev/pts "$ROOTFS_DIR/dev/pts"
     mount --bind /proc "$ROOTFS_DIR/proc"
-    mount --bind /sys  "$ROOTFS_DIR/sys"
+    mount --bind /sys "$ROOTFS_DIR/sys"
+
+    cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
 
     cat <<'EOF' > "$ROOTFS_DIR/tmp/setup.sh"
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-# Firmware support
+# Enable firmware
 sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list
 apt-get update
 apt-get install -y firmware-linux firmware-linux-nonfree
@@ -100,6 +108,9 @@ echo "ALGO=zstd" > /etc/default/zramswap
 # KDE optimization
 mkdir -p /etc/skel/.config
 echo -e "[Basic Settings]\nIndexing-Enabled=false" > /etc/skel/.config/baloofilerc
+
+# Identity
+echo "Hyper OS $(date)" > /etc/hyper-release
 
 # Cleanup
 apt-get autoremove -y
@@ -148,15 +159,15 @@ stage_squashfs() {
 }
 
 # =========================
-# Stage 5: Kernel + GRUB
+# Stage 5: Bootloader
 # =========================
 stage_bootloader() {
     log "Setting up bootloader..."
 
     local kernel initrd
 
-    kernel="$(find "$ROOTFS_DIR/boot" -name 'vmlinuz-*' | sort -V | tail -n1)"
-    initrd="$(find "$ROOTFS_DIR/boot" -name 'initrd.img-*' | sort -V | tail -n1)"
+    kernel="$(find "$ROOTFS_DIR/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort -V | tail -n1)"
+    initrd="$(find "$ROOTFS_DIR/boot" -maxdepth 1 -type f -name 'initrd.img-*' | sort -V | tail -n1)"
 
     [[ -f "$kernel" ]] || die "Kernel not found"
     [[ -f "$initrd" ]] || die "Initrd not found"
@@ -202,10 +213,15 @@ stage_verify() {
 
     sha256sum "$ISO_PATH" > "$ISO_PATH.sha256"
 
+    # UEFI check
     xorriso -indev "$ISO_PATH" -find /EFI/BOOT/BOOTX64.EFI -quit >/dev/null \
         || die "UEFI boot missing"
 
-    log "ISO ready: $ISO_PATH"
+    # BIOS check
+    xorriso -indev "$ISO_PATH" -report_el_torito plain | grep -qi "platform id.*0x00" \
+        || die "BIOS boot missing"
+
+    log "ISO verified: $ISO_PATH"
 }
 
 # =========================
@@ -218,7 +234,10 @@ stage_test() {
         -m 2048 \
         -cdrom "$ISO_PATH" \
         -boot d \
-        -enable-kvm || warn "QEMU test failed"
+        -enable-kvm \
+        -cpu host \
+        -smp "$(nproc)" \
+        -serial mon:stdio || warn "QEMU test failed"
 }
 
 # =========================
