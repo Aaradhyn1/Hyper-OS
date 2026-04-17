@@ -1,75 +1,87 @@
 #!/usr/bin/env bash
-# Advanced Hyper OS Performance Provisioner
 set -Eeuo pipefail
-trap 'echo "Error on line $LINENO. Script failed."' ERR
+trap 'echo "Error on line $LINENO"' ERR
 
-# Configuration
 CONFIG_SRC="./configs/performance"
 TARGET_DIR="/etc"
-LOG_TAG="[HyperOS-Perf]"
+LOG_TAG="[HyperOS-Titan]"
 
-# Utility for standardized logging
 log() {
-  printf '%s %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$LOG_TAG" "$1"
+  printf '%s %s %s\n' "$(date '+%H:%M:%S')" "$LOG_TAG" "$1"
 }
 
-# 1. Pre-flight Checks
 if [[ "$EUID" -ne 0 ]]; then 
-  log "ERROR: Must run as root. Try: sudo $0" >&2
   exit 1
 fi
 
-# Ensure source configs exist before proceeding
 for cfg in sysctl.conf systemd.conf journald.conf; do
-  [[ -f "$CONFIG_SRC/$cfg" ]] || { log "FATAL: $cfg missing in $CONFIG_SRC"; exit 1; }
+  [[ -f "$CONFIG_SRC/$cfg" ]] || exit 1
 done
 
-# 2. Kernel & Systemd Hardening/Tuning
-log "Applying kernel sysctl parameters..."
-install -D -m 0644 "$CONFIG_SRC/sysctl.conf" "$TARGET_DIR/sysctl.d/99-hyperos-performance.conf"
-# Apply without full system reload to avoid interrupting active network stacks unnecessarily
-sysctl -p "$TARGET_DIR/sysctl.d/99-hyperos-performance.conf" >/dev/null
+log "Applying System Stack..."
+install -D -m 0644 "$CONFIG_SRC/sysctl.conf" "$TARGET_DIR/sysctl.d/99-hyperos.conf"
+install -D -m 0644 "$CONFIG_SRC/systemd.conf" "$TARGET_DIR/systemd/system.conf.d/10-hyperos.conf"
+install -D -m 0644 "$CONFIG_SRC/journald.conf" "$TARGET_DIR/systemd/journald.conf.d/10-hyperos.conf"
 
-log "Configuring systemd manager & journald..."
-install -D -m 0644 "$CONFIG_SRC/systemd.conf" "$TARGET_DIR/systemd/system.conf.d/10-hyperos-performance.conf"
-install -D -m 0644 "$CONFIG_SRC/journald.conf" "$TARGET_DIR/systemd/journald.conf.d/10-hyperos-journal.conf"
+cat <<EOF > /etc/security/limits.d/99-hyperos.conf
+* soft nofile 1048576
+* hard nofile 1048576
+* soft memlock unlimited
+* hard memlock unlimited
+EOF
 
-# 3. Dynamic Service Optimization
-# Added: udisks2 (heavy polling), fwupd (background scanning), and packagekit
+cat <<EOF > /etc/sysctl.d/99-hyperos-ultra.conf
+kernel.sched_min_granularity_ns = 10000000
+kernel.sched_wakeup_granularity_ns = 15000000
+kernel.sched_migration_cost_ns = 500000
+kernel.nmi_watchdog = 0
+vm.swappiness = 1
+vm.vfs_cache_pressure = 50
+vm.dirty_ratio = 10
+vm.dirty_background_ratio = 3
+vm.mmap_min_addr = 4096
+net.core.netdev_max_backlog = 16384
+net.core.somaxconn = 8192
+EOF
+sysctl -p /etc/sysctl.d/99-hyperos-ultra.conf
+
+echo "madvise" > /sys/kernel/mm/transparent_hugepage/enabled || true
+echo "never" > /sys/kernel/mm/transparent_hugepage/defrag || true
+
 SERVICES_TO_STRIP=(
-  apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer
+  apt-daily.service apt-daily.timer apt-daily-upgrade.service apt-daily-upgrade.timer
   man-db.timer e2scrub_all.timer motd-news.timer bluetooth.service 
   ModemManager.service avahi-daemon.service cups.service 
   udisks2.service fwupd.service packagekit.service
+  gssproxy.service rpcbind.service rpcbind.socket
 )
 
-log "Pruning non-essential background units..."
 for unit in "${SERVICES_TO_STRIP[@]}"; do
-  if systemctl is-enabled "$unit" >/dev/null 2>&1; then
-    systemctl disable --now "$unit" || true
-    systemctl mask "$unit" || true
-    log "  - Masked $unit"
-  fi
+  systemctl disable --now "$unit" 2>/dev/null || true
+  systemctl mask "$unit" 2>/dev/null || true
 done
 
-# 4. Advanced: I/O Scheduler & CPU Governor Tuning
-log "Optimizing Hardware Governors..."
-# Set CPU to performance if available
 if [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
     echo "performance" | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null || true
 fi
 
-# Set I/O scheduler to 'none' (for NVMe) or 'mq-deadline' (for SSD)
-for dev in /sys/block/sd* /sys/block/nvme*; do
-    [ -e "$dev/queue/scheduler" ] || continue
-    # If it's an NVMe, 'none' is usually best to bypass overhead
-    [[ "$dev" == *"nvme"* ]] && echo "none" > "$dev/queue/scheduler" || echo "mq-deadline" > "$dev/queue/scheduler"
+for dev in /sys/devices/system/cpu/cpu*/cpuidle/state*/disable; do
+    [[ "${dev}" == *"state0"* ]] && continue
+    echo 1 > "$dev" 2>/dev/null || true
 done
 
-# 5. Finalize
-log "Reloading control groups and daemon state..."
+for dev in /sys/block/sd* /sys/block/nvme*; do
+    [ -e "$dev/queue/scheduler" ] || continue
+    [[ "$dev" == *"nvme"* ]] && echo "none" > "$dev/queue/scheduler" || echo "mq-deadline" > "$dev/queue/scheduler"
+    echo 2 > "$dev/queue/nomerges" 2>/dev/null || true
+    echo 0 > "$dev/queue/add_random" 2>/dev/null || true
+    echo 1 > "$dev/queue/rq_affinity" 2>/dev/null || true
+done
+
+if command -v setpci >/dev/null; then
+    setpci -v -d *:* 68.w=5910 2>/dev/null || true
+fi
+
 systemctl daemon-reload
 systemctl restart systemd-journald
-
-log "Optimization complete. System latency minimized."
-log "RECOMMENDED: Reboot to clear fragmented memory and apply systemd-manager limits."
+log "Deployment Complete."
