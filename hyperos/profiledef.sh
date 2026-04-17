@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 # =========================
 # Core Metadata
@@ -13,18 +13,9 @@ readonly ISO_APPLICATION="Hyper OS Live"
 # =========================
 # Build Configuration
 # =========================
-readonly INSTALL_DIR="arch"
 readonly ARCH="x86_64"
-readonly BUILD_MODES=('iso')
-
-readonly BOOT_MODES=(
-  'bios.syslinux.mbr'
-  'bios.syslinux.eltorito'
-  'uefi-ia32.systemd-boot.esp'
-  'uefi-x64.systemd-boot.esp'
-  'uefi-ia32.systemd-boot.eltorito'
-  'uefi-x64.systemd-boot.eltorito'
-)
+readonly WORK_DIR="work"
+readonly OUT_DIR="out"
 
 # =========================
 # Pacman & RootFS
@@ -37,29 +28,11 @@ readonly AIROOTFS_IMAGE_OPTS=(
 )
 
 # =========================
-# File Permissions
+# Logging
 # =========================
-declare -A FILE_PERMISSIONS=(
-  ["/etc/shadow"]="0:0:400"
-  ["/root/customize_airootfs.sh"]="0:0:755"
-  ["/usr/local/bin/hyper-firstboot"]="0:0:755"
-)
-
-# =========================
-# Logging Utilities
-# =========================
-log() {
-  echo -e "\033[1;34m[INFO]\033[0m $*"
-}
-
-warn() {
-  echo -e "\033[1;33m[WARN]\033[0m $*" >&2
-}
-
-error() {
-  echo -e "\033[1;31m[ERROR]\033[0m $*" >&2
-  exit 1
-}
+log()   { echo -e "\033[1;34m[INFO]\033[0m $*"; }
+warn()  { echo -e "\033[1;33m[WARN]\033[0m $*" >&2; }
+error() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; exit 1; }
 
 # =========================
 # Validation
@@ -72,26 +45,74 @@ check_dependencies() {
 }
 
 check_root() {
-  [[ $EUID -eq 0 ]] || error "Run this script as root."
+  [[ $EUID -eq 0 ]] || error "Run as root."
+}
+
+prepare_dirs() {
+  mkdir -p "$WORK_DIR" "$OUT_DIR"
+}
+
+clean() {
+  log "Cleaning build directories..."
+  rm -rf "$WORK_DIR" "$OUT_DIR"
 }
 
 # =========================
-# Main Entry
+# Build
 # =========================
+build_iso() {
+  log "Starting mkarchiso build..."
+
+  mkarchiso \
+    -v \
+    -w "$WORK_DIR" \
+    -o "$OUT_DIR" \
+    .
+
+  log "ISO build complete."
+
+  local iso_file
+  iso_file=$(find "$OUT_DIR" -name "*.iso" | head -n1)
+
+  [[ -f "$iso_file" ]] || error "ISO not found after build."
+
+  log "Generated ISO: $iso_file"
+
+  sha256sum "$iso_file" > "$iso_file.sha256"
+  log "Checksum generated."
+}
+
+# =========================
+# CLI
+# =========================
+usage() {
+  echo "Usage: $0 [build|clean|rebuild]"
+}
+
 main() {
-  log "Starting Hyper OS build process..."
-  
+  local cmd="${1:-build}"
+
   check_root
   check_dependencies
 
-  log "ISO Name: $ISO_NAME"
-  log "Version: $ISO_VERSION"
-  log "Architecture: $ARCH"
-
-  # Future: hook mkarchiso here
-  # mkarchiso -v -w work -o out .
-
-  log "Build environment validated. Ready to proceed."
+  case "$cmd" in
+    build)
+      prepare_dirs
+      build_iso
+      ;;
+    clean)
+      clean
+      ;;
+    rebuild)
+      clean
+      prepare_dirs
+      build_iso
+      ;;
+    *)
+      usage
+      exit 1
+      ;;
+  esac
 }
 
 main "$@"
