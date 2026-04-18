@@ -2,9 +2,9 @@
 # Hyper OS Raspberry Pi Build Engine (Final)
 set -Eeuo pipefail
 
-# =========================
+
 # Paths & Config
-# =========================
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_FILE="${1:-$ROOT_DIR/configs/rpi4_hyper_defconfig}"
 
