@@ -21,7 +21,7 @@ main() {
   require_root
   require_cmds debootstrap systemd-nspawn
 
-  log INFO "Initializing Hyper OS Workspace"
+  log INFO "Initializing Hyper OS Workspace."
   cleanup_mounts
   rm -rf "$ROOTFS_DIR"
   mkdir -p "$ROOTFS_DIR"
