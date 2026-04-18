@@ -6,7 +6,7 @@ BUILD_DIR="${ROOT_DIR}/build"
 OUTPUT_DIR="${ROOT_DIR}/out"
 
 IMAGE_NAME="Hyper-OS-Titan-$(date +%Y%m%d)"
-DISTRO="debian"
+DISTRO="debian" 
 RELEASE="bookworm"
 ARCH="amd64"
 
