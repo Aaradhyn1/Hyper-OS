@@ -2,9 +2,9 @@
 # Hyper OS Architect-Grade Build System v3 (Hardened)
 set -Eeuo pipefail
 
-# =========================
+
 # Globals
-# =========================
+
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly BUILD_DIR="$SCRIPT_DIR/build"
 readonly ROOTFS_DIR="$BUILD_DIR/rootfs"
@@ -19,9 +19,9 @@ readonly PKG_CORE="linux-image-amd64,systemd-sysv,live-boot,sudo,bash-completion
 readonly PKG_UI="plasma-desktop,sddm,konsole,dolphin,network-manager,firefox-esr,pipewire wireplumber"
 readonly PKG_PERF="tlp,thermald,fwupd,bolt,zram-tools,irqbalance"
 
-# =========================
+
 # Logging
-# =========================
+
 log()   { printf "\e[1;34m[INFO]\e[0m %s\n" "$*"; }
 warn()  { printf "\e[1;33m[WARN]\e[0m %s\n" "$*" >&2; }
 die()   { printf "\e[1;31m[FATAL]\e[0m %s\n" "$*" >&2; exit 1; }
