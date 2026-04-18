@@ -2,7 +2,6 @@
 # Hyper OS - Ultimate Build Pipeline (Final)
 set -Eeuo pipefail
 
-# =========================
 # Global Config
 # =========================
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
