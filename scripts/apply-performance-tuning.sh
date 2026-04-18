@@ -61,7 +61,7 @@ for unit in "${SERVICES_TO_STRIP[@]}"; do
   systemctl mask "$unit" 2>/dev/null || true
 done
 
-if [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
+if [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then 
     echo "performance" | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null || true
 fi
 
