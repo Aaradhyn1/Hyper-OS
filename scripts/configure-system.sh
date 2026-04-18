@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# =========================
+
 # Environment & Logging
-# =========================
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/build-common.sh"
 
 : "${HOSTNAME:?HOSTNAME must be set}"
 : "${USERNAME:=hyper}"
 
-# =========================
+
 # Package Sets
-# =========================
+
 KDE_PKGS="plasma-desktop sddm konsole dolphin"
 LIGHT_PKGS="openbox lightdm pcmanfm xterm"
 PERF_PKGS="zram-tools irqbalance pipewire wireplumber pipewire-audio-client-libraries"
