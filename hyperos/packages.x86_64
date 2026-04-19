@@ -1,18 +1,98 @@
-base 
+# =========================
+# Core System
+# =========================
+base
 linux
 linux-firmware
+mkinitcpio
 systemd
+systemd-sysvcompat
+dbus
+kmod
+
+# =========================
+# Boot & ISO
+# =========================
+archiso
+mkinitcpio-archiso
+syslinux
+systemd-boot
+efibootmgr
+
+# =========================
+# Networking
+# =========================
 networkmanager
+iproute2
+iptables-nft
+iwd
+dhclient
+
+# =========================
+# User & System Tools
+# =========================
 sudo
+bash-completion
+nano
+less
+htop
+neofetch
+curl
+wget
+pciutils
+usbutils
+
+# =========================
+# Display Stack (X11)
+# =========================
 xorg-server
 xorg-xinit
+xorg-xrandr
+xorg-xsetroot
+xf86-video-vesa
+mesa
+
+# =========================
+# Desktop 
+# =========================
 openbox
 lightdm
 lightdm-gtk-greeter
 pcmanfm
+lxappearance
+obconf
+
+# =========================
+# Terminal & Shell
+# =========================
 xterm
-archiso
-mkinitcpio-archiso
-syslinux
-systemd-bootctl
-nano
+alacritty
+
+# =========================
+# Audio 
+# =========================
+pipewire
+pipewire-alsa
+pipewire-pulse
+wireplumber
+
+# =========================
+# Filesystem & Storage
+# =========================
+e2fsprogs
+dosfstools
+ntfs-3g
+btrfs-progs
+
+# =========================
+# Installer 
+# =========================
+calamares
+calamares-settings-arch
+parted
+gptfdisk
+
+# =========================
+# Security 
+# =========================
+ufw
