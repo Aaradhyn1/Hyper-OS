@@ -1,30 +1,32 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+trap 'echo "[HyperOS-Config] ERROR at line $LINENO"; exit 1' ERR
 
-
+# =========================
 # Environment & Logging
-
+# =========================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/build-common.sh"
 
 : "${HOSTNAME:?HOSTNAME must be set}"
 : "${USERNAME:=hyper}"
 
+LOG_TAG="[HyperOS-Config]"
 
+# =========================
 # Package Sets
-
+# =========================
 KDE_PKGS="plasma-desktop sddm konsole dolphin"
 LIGHT_PKGS="openbox lightdm pcmanfm xterm"
 PERF_PKGS="zram-tools irqbalance pipewire wireplumber pipewire-audio-client-libraries"
 INSTALLER_PKGS="calamares calamares-settings-debian parted grub-pc grub-efi-amd64 os-prober"
 
-log INFO "Initializing Advanced Configuration for $HOSTNAME"
+# =========================
+# Functions
+# =========================
+install_calamares_assets() {
+  log INFO "Installing Calamares assets..."
 
-main() {
-  setup_build_env
-  mount_chroot_fs
-
-  log INFO "Installing Calamares assets"
   install -d \
     "$ROOTFS_DIR/etc/calamares/modules" \
     "$ROOTFS_DIR/etc/calamares/branding/hyperos" \
@@ -34,28 +36,31 @@ main() {
 
   install -m 0644 "$ROOT_DIR/configs/calamares/settings.conf" \
     "$ROOTFS_DIR/etc/calamares/settings.conf"
+
   install -m 0644 "$ROOT_DIR/configs/calamares/modules.conf" \
     "$ROOTFS_DIR/etc/calamares/modules.conf"
+
   install -m 0644 "$ROOT_DIR/configs/calamares/branding/branding.desc" \
     "$ROOTFS_DIR/etc/calamares/branding/hyperos/branding.desc"
+
   install -m 0644 "$ROOT_DIR/configs/calamares/branding/show.qml" \
     "$ROOTFS_DIR/etc/calamares/branding/hyperos/show.qml"
 
-  install -m 0644 "$ROOT_DIR/configs/calamares/modules/unpackfs.conf" \
-    "$ROOTFS_DIR/etc/calamares/modules/unpackfs.conf"
-  install -m 0644 "$ROOT_DIR/configs/calamares/modules/bootloader.conf" \
-    "$ROOTFS_DIR/etc/calamares/modules/bootloader.conf"
-  install -m 0644 "$ROOT_DIR/configs/calamares/modules/shellprocess.conf" \
-    "$ROOTFS_DIR/etc/calamares/modules/shellprocess.conf"
+  install -m 0644 "$ROOT_DIR/configs/calamares/modules/"*.conf \
+    "$ROOTFS_DIR/etc/calamares/modules/"
 
   install -m 0755 "$ROOT_DIR/configs/installer/hyperos-installer" \
     "$ROOTFS_DIR/usr/local/bin/hyperos-installer"
+
   install -m 0644 "$ROOT_DIR/configs/installer/install-hyper-os.desktop" \
     "$ROOTFS_DIR/usr/share/applications/install-hyper-os.desktop"
+
   install -m 0644 "$ROOT_DIR/configs/installer/hyperos-calamares-autostart.desktop" \
     "$ROOTFS_DIR/etc/xdg/autostart/hyperos-calamares-autostart.desktop"
+}
 
-  log INFO "Entering chroot provisioning"
+provision_chroot() {
+  log INFO "Provisioning inside chroot..."
 
   LIGHT_PKGS="$LIGHT_PKGS" \
   PERF_PKGS="$PERF_PKGS" \
@@ -68,9 +73,6 @@ main() {
 
 export DEBIAN_FRONTEND=noninteractive
 
-# =========================
-# Packages
-# =========================
 apt-get update
 apt-get install -y --no-install-recommends \
   $LIGHT_PKGS $PERF_PKGS $INSTALLER_PKGS \
@@ -92,7 +94,7 @@ ALGO=zstd
 PERCENT=25
 PRIORITY=100
 EOF
-systemctl enable zramswap.service
+systemctl enable zramswap.service || true
 
 # =========================
 # PipeWire Low Latency
@@ -115,7 +117,7 @@ ufw default allow outgoing
 ufw allow ssh
 ufw --force enable
 
-systemctl enable apparmor.service
+systemctl enable apparmor.service || true
 
 # =========================
 # User Setup
@@ -137,7 +139,7 @@ else
 fi
 
 # =========================
-# LightDM Autologin
+# Display Manager
 # =========================
 mkdir -p /etc/lightdm/lightdm.conf.d
 cat > /etc/lightdm/lightdm.conf.d/50-autologin.conf <<EOF
@@ -146,7 +148,7 @@ autologin-user=$USERNAME
 autologin-session=openbox
 EOF
 
-systemctl enable lightdm.service
+systemctl enable lightdm.service || true
 
 # =========================
 # Openbox Defaults
@@ -201,7 +203,7 @@ ExecStart=/usr/local/sbin/check-live-persistence
 WantedBy=multi-user.target
 EOF
 
-systemctl enable check-live-persistence.service
+systemctl enable check-live-persistence.service || true
 
 # =========================
 # Cleanup
@@ -212,6 +214,19 @@ rm -rf /var/lib/apt/lists/*
 rm -rf /usr/share/doc/* /usr/share/man/*
 
 CHROOT
+}
+
+# =========================
+# Main
+# =========================
+main() {
+  log INFO "Initializing Advanced Configuration for $HOSTNAME"
+
+  setup_build_env
+  mount_chroot_fs
+
+  install_calamares_assets
+  provision_chroot
 
   log SUCCESS "Configuration complete."
 }
