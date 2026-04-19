@@ -1,96 +1,159 @@
 #!/usr/bin/env bash
+# Hyper OS Isolated Build Engin
 set -Eeuo pipefail
+trap 'echo "[Hyper-Core] ERROR at line $LINENO"; exit 1' ERR
 
-# --- Enterprise Configuration ---
+# =========================
+# Environment
+# =========================
 export IDENTIFIER="hyper-core-$(date +%s)"
 export WORKSPACE="${WORKSPACE:-/tmp/$IDENTIFIER}"
-export SHM_SIZE="${SHM_SIZE:-2G}" # Speed up builds with RAM-backed storage
+export SHM_SIZE="${SHM_SIZE:-2G}"
+export TARGET_DIR=""
+export LOG_DIR="${LOG_DIR:-$WORKSPACE/logs}"
 
-# --- Advanced Isolation (The "Sandbox" Logic) ---
-# Uses unshare to create a private mount namespace
+LOG_TAG="[Hyper-Core]"
+
+log() {
+    local lvl=$1; shift
+    printf '%s %s [%s] %s\n' "$(date '+%H:%M:%S')" "$LOG_TAG" "$lvl" "$*"
+}
+
+die() { log ERR "$*"; exit 1; }
+
+# =========================
+# Namespace Isolation
+# =========================
 isolate_namespace() {
     if [[ "${NS_ISOLATED:-}" != "true" ]]; then
-        log INFO "Spawning isolated mount namespace..."
+        log INFO "Spawning isolated namespace..."
         export NS_ISOLATED=true
-        # -m: Private mount namespace | -u: Private UTS (hostname) namespace
-        exec unshare -m -u --map-root-user "$BASH_SOURCE" "$@"
+        exec unshare -m -u -i -p --fork --mount-proc --map-root-user "$BASH_SOURCE" "$@"
     fi
 }
 
-# --- Snapshotting with OverlayFS ---
-# Allows you to "undo" changes to your rootfs instantly
+# =========================
+# OverlayFS Snapshot Layer
+# =========================
 setup_overlay() {
-    log INFO "Initializing OverlayFS Layer..."
-    mkdir -p "$WORKSPACE"/{lower,upper,work,merged}
-    
-    # 'lower' is your read-only base; 'upper' is where changes are written
-    # This prevents accidental modification of your golden image base
+    log INFO "Initializing OverlayFS..."
+
+    mkdir -p "$WORKSPACE"/{lower,upper,work,merged,logs}
+    mount --bind "$ROOTFS_DIR" "$WORKSPACE/lower"
+
     mount -t overlay overlay \
-        -o lowerdir="$ROOTFS_DIR",upperdir="$WORKSPACE/upper",workdir="$WORKSPACE/work" \
+        -o lowerdir="$WORKSPACE/lower",upperdir="$WORKSPACE/upper",workdir="$WORKSPACE/work" \
         "$WORKSPACE/merged"
-    
-    # Update global path to point to the virtual merged layer
+
     export TARGET_DIR="$WORKSPACE/merged"
 }
 
-# --- Atomic Chroot Execution ---
-# Runs a command inside the chroot and ensures it cannot escape
+# =========================
+# Mount Essentials
+# =========================
+mount_chroot_fs() {
+    log INFO "Mounting chroot filesystems..."
+
+    mkdir -p "$TARGET_DIR"/{proc,sys,dev,dev/pts}
+
+    mount --bind /dev "$TARGET_DIR/dev"
+    mount --bind /dev/pts "$TARGET_DIR/dev/pts"
+    mount -t proc proc "$TARGET_DIR/proc"
+    mount -t sysfs sys "$TARGET_DIR/sys"
+}
+
+cleanup_mounts() {
+    log INFO "Cleaning mounts..."
+
+    mount | grep "$WORKSPACE" | awk '{print $3}' | tac | xargs -r umount -lf || true
+}
+trap cleanup_mounts EXIT
+
+# =========================
+# Controlled Execution
+# =========================
 chroot_exec() {
     local cmd="$*"
-    log INFO "Executing inside Jail: $cmd"
-    
-    # Use 'systemd-run' to cap CPU/RAM so the build doesn't freeze the host
-    systemd-run --scope -p MemoryMax=4G -p CPUQuota=80% \
+    log INFO "Executing: $cmd"
+
+    systemd-run --quiet --wait --collect \
+        -p MemoryMax=4G \
+        -p CPUQuota=80% \
+        -p TasksMax=512 \
         chroot "$TARGET_DIR" /bin/bash -c "
+            set -Eeuo pipefail
             export HOME=/root
             export LC_ALL=C.UTF-8
-            source /etc/profile
+            source /etc/profile || true
             $cmd
         "
 }
 
-# --- Virtual Hardware Injection ---
-# Injects fake hardware info so the build doesn't try to touch host firmware
+# =========================
+# Hardware Mocking
+# =========================
 mock_hardware() {
-    log INFO "Mocking hardware interfaces..."
+    log INFO "Mocking hardware..."
+
     mkdir -p "$TARGET_DIR/sys/class/dmi/id"
-    echo "Hyper-OS-Virtual-Platform" > "$TARGET_DIR/sys/class/dmi/id/product_name"
-    
-    # Prevent the chroot from starting real services
-    cat <<EOF > "$TARGET_DIR/usr/sbin/policy-rc.d"
+    echo "Hyper-OS-Virtual" > "$TARGET_DIR/sys/class/dmi/id/product_name"
+
+    cat > "$TARGET_DIR/usr/sbin/policy-rc.d" <<'EOF'
 #!/bin/sh
 exit 101
 EOF
     chmod +x "$TARGET_DIR/usr/sbin/policy-rc.d"
 }
 
-# --- Enhanced Error Telemetry ---
+# =========================
+# Diagnostics
+# =========================
 dump_debug_info() {
-    log WARN "Generating post-mortem diagnostics..."
-    df -h "$TARGET_DIR"
-    grep "$TARGET_DIR" /proc/mounts > "$LOG_DIR/mount_leak.log" || true
+    log WARN "Collecting diagnostics..."
+
+    mkdir -p "$LOG_DIR"
+
+    df -h "$TARGET_DIR" > "$LOG_DIR/disk_usage.log" || true
+    mount | grep "$WORKSPACE" > "$LOG_DIR/mounts.log" || true
+    dmesg | tail -n 50 > "$LOG_DIR/dmesg.log" || true
 }
 
-# --- Execution ---
+# =========================
+# Validation
+# =========================
+require_cmds() {
+    for cmd in "$@"; do
+        command -v "$cmd" >/dev/null || die "Missing dependency: $cmd"
+    done
+}
+
+require_root() {
+    [[ $EUID -eq 0 ]] || die "Run as root"
+}
+
+# =========================
+# Main Execution
+# =========================
 main() {
-    setup_build_env
+    require_root
+    require_cmds unshare systemd-run mount chroot
+
+    [[ -d "${ROOTFS_DIR:-}" ]] || die "ROOTFS_DIR not set or missing"
+
+    mkdir -p "$WORKSPACE"
+
     isolate_namespace "$@"
-    
-    # 1. Validation
-    require_cmds systemd-run unshare mount chroot
-    
-    # 2. Virtualization Layer
+
+    log INFO "Initializing workspace: $WORKSPACE"
+
     setup_overlay
-    mount_chroot_fs "$TARGET_DIR"
+    mount_chroot_fs
     mock_hardware
-    
-    # 3. Task Execution Example
+
+    # Example workload
     chroot_exec "apt-get update && apt-get install -y linux-image-amd64"
-    
-    log INFO "Build Phase Finished Successfully."
+
+    log INFO "Build completed successfully."
 }
 
-# Trigger main if script is executed directly
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
-fi
+main "$@"
