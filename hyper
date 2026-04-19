@@ -6,12 +6,12 @@ set -Eeuo pipefail
 # =========================
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$ROOT_DIR/logs"
-LOG_FILE="$LOG_DIR/hyper-$(date +%Y%m).log"
+LOG_FILE="$LOG_DIR/hyper-$(date +%Y%m%d-%H%M%S).log"
 LOCK_FILE="/tmp/hyper-build.lock"
 
 DRY_RUN=0
 DEBUG=0
-STEP_TIMEOUT="${STEP_TIMEOUT:-0}"  # seconds (0 = no timeout)
+STEP_TIMEOUT="${STEP_TIMEOUT:-0}"
 
 mkdir -p "$LOG_DIR"
 
@@ -23,6 +23,7 @@ log() {
   local color="\e[34m"
   [[ "$level" == "ERROR" ]] && color="\e[31m"
   [[ "$level" == "SUCCESS" ]] && color="\e[32m"
+  [[ "$level" == "WARN" ]] && color="\e[33m"
 
   printf "${color}[hyper][%s][%s] %s\e[0m\n" \
     "$level" "$(date '+%H:%M:%S')" "$*" | tee -a "$LOG_FILE"
@@ -34,18 +35,17 @@ die() {
 }
 
 # =========================
-# Cleanup & Lock
+# Cleanup & Signals
 # =========================
 cleanup() {
-  log INFO "Releasing lock and cleaning up..."
-  flock -u 200 || true
-  rm -f "$LOCK_FILE"
+  log INFO "Cleanup triggered"
+  [[ -f "$LOCK_FILE" ]] && rm -f "$LOCK_FILE"
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 acquire_lock() {
   exec 200>"$LOCK_FILE"
-  flock -n 200 || die "Another build is running."
+  flock -n 200 || die "Another build is running"
 }
 
 # =========================
@@ -53,14 +53,14 @@ acquire_lock() {
 # =========================
 require_tool() {
   for tool in "$@"; do
-    command -v "$tool" >/dev/null 2>&1 || die "Missing dependency: $tool"
+    command -v "$tool" >/dev/null 2>&1 || die "Missing: $tool"
   done
 }
 
 check_disk() {
   local avail
-  avail=$(df "$ROOT_DIR" | awk 'NR==2 {print $4}')
-  [[ "$avail" -gt 1048576 ]] || die "Not enough disk space."
+  avail=$(df --output=avail "$ROOT_DIR" | tail -n1)
+  [[ "$avail" -gt 1048576 ]] || die "Insufficient disk space (<1GB)"
 }
 
 # =========================
@@ -70,19 +70,22 @@ run_step() {
   local label="$1"; shift
   local script="$1"; shift
 
-  [[ -x "$script" ]] || die "Script missing: $script"
+  [[ -x "$script" ]] || die "Missing script: $script"
 
   log INFO "===> $label"
+  local start_time
+  start_time=$(date +%s)
 
-  [[ "$DRY_RUN" -eq 1 ]] && {
-    log INFO "[DRY-RUN] Skipping execution: $script"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    log WARN "[DRY-RUN] $script"
     return 0
-  }
+  fi
 
   set +e
 
   if [[ "$STEP_TIMEOUT" -gt 0 ]]; then
-    timeout "$STEP_TIMEOUT" bash "$script" "$@" 2>&1 | tee -a "$LOG_FILE"
+    timeout --kill-after=5 "$STEP_TIMEOUT" \
+      bash "$script" "$@" 2>&1 | tee -a "$LOG_FILE"
   else
     bash "$script" "$@" 2>&1 | tee -a "$LOG_FILE"
   fi
@@ -90,7 +93,11 @@ run_step() {
   local status=${PIPESTATUS[0]}
   set -e
 
-  [[ $status -eq 0 ]] || die "Step '$label' failed (exit $status)"
+  local duration=$(( $(date +%s) - start_time ))
+
+  [[ $status -eq 0 ]] \
+    && log SUCCESS "$label completed in ${duration}s" \
+    || die "$label failed (${duration}s, exit=$status)"
 }
 
 # =========================
@@ -98,16 +105,18 @@ run_step() {
 # =========================
 build_iso() {
   require_tool mksquashfs grub-mkrescue xorriso
-  run_step "Rootfs"   "$ROOT_DIR/scripts/build-rootfs.sh" "$@"
-  run_step "Config"   "$ROOT_DIR/scripts/configure-system.sh" "$@"
-  run_step "ISO"      "$ROOT_DIR/scripts/build-iso.sh" "$@"
-  log SUCCESS "ISO Build Complete"
+  run_step "RootFS Build" "$ROOT_DIR/scripts/build-rootfs.sh" "$@"
+  run_step "System Config" "$ROOT_DIR/scripts/configure-system.sh" "$@"
+  run_step "ISO Build" "$ROOT_DIR/scripts/build-iso.sh" "$@"
 }
 
 build_rpi() {
   require_tool make gcc bison flex
-  run_step "Buildroot" "$ROOT_DIR/scripts/build.sh" "$@"
-  log SUCCESS "Raspberry Pi Image Complete"
+  run_step "Buildroot Pipeline" "$ROOT_DIR/scripts/build.sh" "$@"
+}
+
+build_fedora() {
+  run_step "Fedora KDE Build" "$ROOT_DIR/scripts/build-fedora-kde.sh" "$@"
 }
 
 # =========================
@@ -126,14 +135,14 @@ Targets:
   fedora
 
 Options:
-  --debug       Enable shell tracing
-  --dry-run     Simulate execution
-  --timeout=N   Timeout per step (seconds)
+  --debug
+  --dry-run
+  --timeout=N
 EOF
 }
 
 main() {
-  [[ $# -lt 2 ]] && { usage; exit 1; }
+  [[ $# -lt 2 ]] && { usage; exit 2; }
 
   local action="$1"; shift
   local target="$1"; shift
@@ -143,6 +152,7 @@ main() {
       --debug) DEBUG=1; set -x ;;
       --dry-run) DRY_RUN=1 ;;
       --timeout=*) STEP_TIMEOUT="${arg#*=}" ;;
+      *) ;;
     esac
   done
 
@@ -154,7 +164,7 @@ main() {
       case "$target" in
         iso) build_iso "$@" ;;
         rpi) build_rpi "$@" ;;
-        fedora) run_step "Fedora" "$ROOT_DIR/scripts/build-fedora-kde.sh" "$@" ;;
+        fedora) build_fedora "$@" ;;
         *) die "Unknown target: $target" ;;
       esac
       ;;
@@ -162,6 +172,8 @@ main() {
       die "Unknown action: $action"
       ;;
   esac
+
+  log SUCCESS "Pipeline complete"
 }
 
 main "$@"
