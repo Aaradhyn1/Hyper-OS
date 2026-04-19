@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Hyper OS Architect-Grade Build System v3 (Hardened)
+# Hyper OS Architect Build System v4 (Production)
 set -Eeuo pipefail
+trap 'echo "[HYPER-BUILD] ERROR at line $LINENO"; exit 1' ERR
 
-
+# =========================
 # Globals
-
+# =========================
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly BUILD_DIR="$SCRIPT_DIR/build"
 readonly ROOTFS_DIR="$BUILD_DIR/rootfs"
@@ -16,24 +17,22 @@ readonly ARCH="amd64"
 readonly APT_PROXY="${APT_PROXY:-}"
 
 readonly PKG_CORE="linux-image-amd64,systemd-sysv,live-boot,sudo,bash-completion"
-readonly PKG_UI="plasma-desktop,sddm,konsole,dolphin,network-manager,firefox-esr,pipewire wireplumber"
+readonly PKG_UI="plasma-desktop,sddm,konsole,dolphin,network-manager,firefox-esr,pipewire,wireplumber"
 readonly PKG_PERF="tlp,thermald,fwupd,bolt,zram-tools,irqbalance"
 
-
+# =========================
 # Logging
-
+# =========================
 log()   { printf "\e[1;34m[INFO]\e[0m %s\n" "$*"; }
 warn()  { printf "\e[1;33m[WARN]\e[0m %s\n" "$*" >&2; }
 die()   { printf "\e[1;31m[FATAL]\e[0m %s\n" "$*" >&2; exit 1; }
 
 # =========================
-# Cleanup
+# Cleanup (robust)
 # =========================
 cleanup() {
-    log "Unmounting chroot..."
-    for m in dev proc sys; do
-        mountpoint -q "$ROOTFS_DIR/$m" && umount -lf "$ROOTFS_DIR/$m" || true
-    done
+    log "Cleaning mounts..."
+    mount | grep "$ROOTFS_DIR" | awk '{print $3}' | tac | xargs -r umount -lf || true
 }
 trap cleanup EXIT
 
@@ -45,10 +44,20 @@ require_root() {
 }
 
 check_deps() {
-    local deps=(debootstrap mksquashfs chroot mount umount)
+    local deps=(debootstrap mksquashfs chroot mount umount sha256sum)
     for dep in "${deps[@]}"; do
         command -v "$dep" >/dev/null || die "Missing dependency: $dep"
     done
+}
+
+retry() {
+    local attempts=5 delay=3
+    for ((i=1;i<=attempts;i++)); do
+        "$@" && return 0
+        warn "Retry $i/$attempts failed → retrying..."
+        sleep "$delay"
+    done
+    return 1
 }
 
 prepare_dirs() {
@@ -67,13 +76,13 @@ stage_bootstrap() {
     log "Bootstrapping Debian ($DEBIAN_SUITE)..."
 
     [[ -d "$ROOTFS_DIR/bin" ]] && {
-        warn "RootFS exists, skipping bootstrap"
+        warn "RootFS exists → skipping bootstrap"
         return
     }
 
     [[ -n "$APT_PROXY" ]] && export http_proxy="$APT_PROXY"
 
-    debootstrap \
+    retry debootstrap \
         --variant=minbase \
         --arch="$ARCH" \
         --include="$PKG_CORE,$PKG_UI,$PKG_PERF" \
@@ -86,36 +95,36 @@ stage_bootstrap() {
 stage_configure() {
     log "Configuring system..."
 
-    mount --bind /dev  "$ROOTFS_DIR/dev"
-    mount --bind /proc "$ROOTFS_DIR/proc"
-    mount --bind /sys  "$ROOTFS_DIR/sys"
+    for fs in dev proc sys; do
+        mountpoint -q "$ROOTFS_DIR/$fs" || mount --bind "/$fs" "$ROOTFS_DIR/$fs"
+    done
 
-    # Fix DNS inside chroot
     cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
 
     cat <<'EOF' > "$ROOTFS_DIR/tmp/setup.sh"
-set -euxo pipefail
+set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-echo "[HYPER] Applying performance policies..."
+echo "[HYPER] Applying optimizations..."
+
+# Enable firmware repos
+sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list
+
+apt-get update
+apt-get install -y firmware-linux firmware-linux-nonfree
 
 # ZRAM
 echo "ALGO=zstd" > /etc/default/zramswap
 echo "vm.swappiness=10" > /etc/sysctl.d/99-hyper.conf
 
-# KDE Optimization
+# KDE optimization
 mkdir -p /etc/skel/.config
 cat <<KDE > /etc/skel/.config/baloofilerc
 [Basic Settings]
 Indexing-Enabled=false
 KDE
 
-# Firmware
-sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list
-apt-get update
-apt-get install -y firmware-linux firmware-linux-nonfree
-
-# Reset machine-id
+# Reset identity
 truncate -s 0 /etc/machine-id
 
 # Cleanup
@@ -126,7 +135,7 @@ EOF
 
     chmod +x "$ROOTFS_DIR/tmp/setup.sh"
     chroot "$ROOTFS_DIR" /bin/bash /tmp/setup.sh
-    rm "$ROOTFS_DIR/tmp/setup.sh"
+    rm -f "$ROOTFS_DIR/tmp/setup.sh"
 }
 
 # =========================
@@ -139,11 +148,12 @@ stage_compress() {
 
     mksquashfs "$ROOTFS_DIR" "$out" \
         -comp zstd -Xcompression-level 17 \
-        -b 1M -noappend -processors "$(nproc)"
+        -b 1M -processors "$(nproc)" \
+        -noappend -always-use-fragments
 
     [[ -f "$out" ]] || die "SquashFS failed"
 
-    log "SquashFS created: $out"
+    log "Created: $out"
 }
 
 # =========================
