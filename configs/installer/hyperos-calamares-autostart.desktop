@@ -2,9 +2,18 @@
 Type=Application
 Version=1.0
 Name=Hyper OS Installer Autostart
-Comment=Launch Hyper OS installer on live boot
+GenericName=System Installer
+Comment=Launch Hyper OS installer on live session startup
+
 Exec=/usr/local/bin/hyperos-installer --auto
+TryExec=/usr/local/bin/hyperos-installer
+
 Icon=calamares
 Terminal=false
+
+Categories=System;Installer;
+
 X-GNOME-Autostart-enabled=true
+X-KDE-autostart-phase=1
+
 NoDisplay=true
