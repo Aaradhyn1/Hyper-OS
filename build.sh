@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+trap 'echo "[HYPER-BRANDING] ERROR at line $LINENO"; exit 1' ERR
 
 # =========================
 # Environment
@@ -8,21 +9,28 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
 ROOTFS_DIR="$BUILD_DIR/rootfs"
 
-CALAMARES_BRAND_DIR="$ROOTFS_DIR/etc/calamares/branding/hyperos"
+CALAMARES_DIR="$ROOTFS_DIR/etc/calamares"
+CALAMARES_BRAND_DIR="$CALAMARES_DIR/branding/hyperos"
 QML_OUT="$CALAMARES_BRAND_DIR/show.qml"
 
-ISO_PATH="$ROOT_DIR/hyperos-$(date +%Y%m%d).iso"
+log() { printf "\e[36m[HYPER-UI]\e[0m %s\n" "$*"; }
+die() { printf "\e[31m[FATAL]\e[0m %s\n" "$*" >&2; exit 1; }
 
-log() { printf "\e[32m[%s] %s\e[0m\n" "$(date '+%H:%M:%S')" "$*"; }
-die() { printf "\e[31m[FATAL] %s\e[0m\n" "$*" >&2; exit 1; }
+require_root() {
+    [[ $EUID -eq 0 ]] || die "Run as root."
+}
+
+require_rootfs() {
+    [[ -d "$ROOTFS_DIR" ]] || die "RootFS not found → run build first"
+}
 
 # =========================
 # UI Generation
 # =========================
 generate_ui() {
-    log "Generating Calamares UI..."
+    log "Generating QML slideshow..."
 
-    mkdir -p "$CALAMARES_BRAND_DIR"
+    install -d "$CALAMARES_BRAND_DIR"
 
     cat > "$QML_OUT" <<'EOF'
 import QtQuick 2.15
@@ -30,67 +38,49 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
 Rectangle {
-    id: root
     anchors.fill: parent
     color: "#050505"
 
-    property int currentIndex: 0
-
+    property int idx: 0
     property var slides: [
-        {"title": "Hyper OS", "desc": "Performance-first Linux with instant responsiveness.", "icon": "⚡"},
-        {"title": "Fast Installs", "desc": "Optimized SquashFS deployment pipeline.", "icon": "🚀"},
-        {"title": "Low Latency Core", "desc": "System tuned for speed, not bloat.", "icon": "🛠️"}
+        { "t": "Hyper OS", "d": "Performance-first Linux.", "i": "⚡" },
+        { "t": "Fast Installs", "d": "Zstd SquashFS pipeline.", "i": "🚀" },
+        { "t": "Low Latency", "d": "Tuned kernel & stack.", "i": "🛠️" }
     ]
 
     Timer {
-        interval: 8000
+        interval: 7000
         running: true
         repeat: true
-        onTriggered: currentIndex = (currentIndex + 1) % slides.length
+        onTriggered: idx = (idx + 1) % slides.length
     }
 
     ColumnLayout {
         anchors.centerIn: parent
         width: parent.width * 0.6
-        spacing: 20
+        spacing: 16
 
         Text {
-            text: slides[currentIndex].icon
-            font.pixelSize: parent.width * 0.08
+            text: slides[idx].i
+            font.pixelSize: parent.width * 0.07
             Layout.alignment: Qt.AlignHCenter
         }
 
         Text {
-            text: slides[currentIndex].title
+            text: slides[idx].t
             color: "white"
             font.bold: true
-            font.pixelSize: parent.width * 0.04
+            font.pixelSize: parent.width * 0.035
             Layout.alignment: Qt.AlignHCenter
         }
 
         Text {
-            text: slides[currentIndex].desc
+            text: slides[idx].d
             color: "#aaa"
             wrapMode: Text.WordWrap
             horizontalAlignment: Text.AlignHCenter
-            font.pixelSize: parent.width * 0.02
+            font.pixelSize: parent.width * 0.018
             Layout.fillWidth: true
-        }
-    }
-
-    Row {
-        anchors.bottom: parent.bottom
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottomMargin: 40
-        spacing: 10
-
-        Repeater {
-            model: slides.length
-            Rectangle {
-                width: 40; height: 4
-                radius: 2
-                color: index === currentIndex ? "#00aaff" : "#333"
-            }
         }
     }
 }
@@ -101,45 +91,46 @@ EOF
 # Branding Config
 # =========================
 generate_branding() {
-    log "Configuring Calamares branding..."
+    log "Writing branding.desc..."
 
-    cat > "$CALAMARES_BRAND_DIR/branding.desc" <<EOF
+    cat > "$CALAMARES_BRAND_DIR/branding.desc" <<'EOF'
 ---
 componentName: hyperos
 welcomeStyleCalamares: true
 strings:
   productName: "Hyper OS"
   shortProductName: "Hyper"
-images:
-  productLogo: ""
 slideshow: show.qml
 EOF
 }
 
 # =========================
-# Build Steps
+# Validation
 # =========================
-run_step() {
-    local name="$1"
-    log "===> $name"
+validate_output() {
+    log "Validating branding..."
+
+    [[ -f "$QML_OUT" ]] || die "QML not generated"
+    [[ -f "$CALAMARES_BRAND_DIR/branding.desc" ]] || die "branding.desc missing"
+
+    grep -q "slideshow: show.qml" "$CALAMARES_BRAND_DIR/branding.desc" \
+        || die "Branding misconfigured"
+
+    log "Branding OK"
 }
 
 # =========================
 # Main
 # =========================
 main() {
-    [[ "$EUID" -ne 0 ]] && die "Root required"
-
-    mkdir -p "$BUILD_DIR" "$ROOTFS_DIR"
+    require_root
+    require_rootfs
 
     generate_ui
     generate_branding
+    validate_output
 
-    run_step "Rootfs Bootstrap"
-    run_step "System Configuration"
-    run_step "ISO Build"
-
-    log "Build Complete: $ISO_PATH"
+    log "Calamares branding injected successfully."
 }
 
 main "$@"
