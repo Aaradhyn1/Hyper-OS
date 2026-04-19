@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Hyper OS Systemd Optimizer (Safe Edition)
+# Hyper OS Systemd Optimizer (Production Grade)
 set -Eeuo pipefail
+trap 'echo "[Systemd-Pro] ERROR at line $LINENO"; exit 1' ERR
 
 DRY_RUN="${DRY_RUN:-0}"
-AGGRESSIVE="${AGGRESSIVE:-0}"   # enable masking only if 1
+AGGRESSIVE="${AGGRESSIVE:-0}"
 LOG_TAG="[Systemd-Pro]"
 
-BACKUP_FILE="/var/log/hyperos-systemd-backup.txt"
+BACKUP_DIR="/var/log/hyperos-systemd"
+BACKUP_FILE="$BACKUP_DIR/enabled-units-$(date +%s).txt"
+STATE_FILE="$BACKUP_DIR/unit-state.log"
 
 PROTECTED_UNITS=(
   systemd-journald.service
@@ -14,6 +17,7 @@ PROTECTED_UNITS=(
   dbus.service
   networking.service
   systemd-networkd.service
+  NetworkManager.service
 )
 
 TARGET_UNITS=(
@@ -36,15 +40,23 @@ TARGET_UNITS=(
 log() { printf '%s %s %s\n' "$(date '+%H:%M:%S')" "$LOG_TAG" "$*"; }
 
 run() {
-  [[ "$DRY_RUN" == "1" ]] && log "[DRY] $*" || "$@"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log "[DRY] $*"
+  else
+    "$@"
+  fi
 }
 
 require_root() {
   [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }
 }
 
+init_backup() {
+  mkdir -p "$BACKUP_DIR"
+}
+
 unit_exists() {
-  systemctl list-unit-files | grep -q "^$1"
+  systemctl list-unit-files --all | awk '{print $1}' | grep -qx "$1"
 }
 
 is_protected() {
@@ -55,8 +67,15 @@ is_protected() {
 }
 
 backup_state() {
-  log "Saving current enabled units → $BACKUP_FILE"
+  log "Backing up enabled units → $BACKUP_FILE"
   systemctl list-unit-files --state=enabled > "$BACKUP_FILE"
+}
+
+record_unit_state() {
+  local unit="$1"
+  local state
+  state=$(systemctl is-enabled "$unit" 2>/dev/null || echo "unknown")
+  echo "$unit $state" >> "$STATE_FILE"
 }
 
 optimize_units() {
@@ -73,6 +92,8 @@ optimize_units() {
       continue
     fi
 
+    record_unit_state "$unit"
+
     if systemctl is-enabled "$unit" >/dev/null 2>&1; then
       log "Disabling: $unit"
       run systemctl disable --now "$unit"
@@ -88,16 +109,41 @@ optimize_units() {
 tune_systemd() {
   log "Applying systemd tuning..."
 
-  CONF="/etc/systemd/system.conf.d/10-hyperos.conf"
+  local CONF="/etc/systemd/system.conf.d/10-hyperos.conf"
   run mkdir -p "$(dirname "$CONF")"
 
-  [[ "$DRY_RUN" == "0" ]] && cat > "$CONF" <<EOF
+  if [[ "$DRY_RUN" == "0" ]]; then
+    cat > "$CONF" <<EOF
 [Manager]
 DefaultTimeoutStartSec=8s
 DefaultTimeoutStopSec=4s
 DefaultRestartSec=100ms
 DefaultLimitNOFILE=65535
 EOF
+  fi
+}
+
+rollback() {
+  log "Rolling back systemd changes..."
+
+  [[ -f "$STATE_FILE" ]] || { log "No state file found"; exit 1; }
+
+  while read -r unit state; do
+    case "$state" in
+      enabled)
+        log "Re-enabling $unit"
+        run systemctl unmask "$unit" 2>/dev/null || true
+        run systemctl enable "$unit"
+        ;;
+      disabled)
+        log "Disabling $unit"
+        run systemctl disable "$unit"
+        ;;
+    esac
+  done < "$STATE_FILE"
+
+  run systemctl daemon-reload
+  log "Rollback complete."
 }
 
 show_metrics() {
@@ -107,19 +153,26 @@ show_metrics() {
 
 main() {
   require_root
+  init_backup
 
-  log "=== Hyper OS System Optimizer ==="
-
-  backup_state
-  optimize_units
-  tune_systemd
-
-  run systemctl daemon-reload
-
-  show_metrics
-
-  log "Done. Reboot and run: systemd-analyze critical-chain"
-  log "Rollback: systemctl re-enable units from $BACKUP_FILE"
+  case "${1:-optimize}" in
+    optimize)
+      log "=== Hyper OS System Optimizer ==="
+      backup_state
+      optimize_units
+      tune_systemd
+      run systemctl daemon-reload
+      show_metrics
+      log "Done. Reboot recommended."
+      ;;
+    rollback)
+      rollback
+      ;;
+    *)
+      echo "Usage: $0 [optimize|rollback]"
+      exit 1
+      ;;
+  esac
 }
 
 main "$@"
