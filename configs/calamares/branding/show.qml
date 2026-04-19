@@ -1,18 +1,18 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
 
 Rectangle {
     id: presentation
     width: 800
     height: 480
-    color: "#0f0f0f" // Modern dark theme
+    color: "#0f0f0f"
 
     property int currentIndex: 0
-    
-    // Data Model: Easy to add more slides later
+
     VisualItemModel {
         id: slideModel
-        
+
         SlideItem {
             title: "Hyper OS"
             desc: "Next-gen performance with BIOS and UEFI support."
@@ -30,7 +30,6 @@ Rectangle {
         }
     }
 
-    // Logic: Auto-advance with progress reset
     Timer {
         id: slideTimer
         interval: 8000
@@ -41,7 +40,6 @@ Rectangle {
         }
     }
 
-    // Background Layer (e.g., subtle animated gradient or blur)
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
@@ -50,24 +48,51 @@ Rectangle {
         }
     }
 
-    // Main Content Switcher
     StackLayout {
-        id: layout
         anchors.fill: parent
         currentIndex: presentation.currentIndex
-        
-        // Transitions are handled via the Item's states or globally via StackView
-        // For simplicity in this snippet, we use Opacity for a clean fade
+
         Repeater {
             model: slideModel
             delegate: Item {
                 opacity: index === presentation.currentIndex ? 1 : 0
                 Behavior on opacity { NumberAnimation { duration: 600 } }
+
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    width: parent.width * 0.6
+                    spacing: 20
+
+                    Image {
+                        source: model.iconSource
+                        fillMode: Image.PreserveAspectFit
+                        Layout.alignment: Qt.AlignHCenter
+                        width: 80
+                        height: 80
+                    }
+
+                    Text {
+                        text: model.title
+                        color: "white"
+                        font.pixelSize: 28
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        text: model.desc
+                        color: "#bbbbbb"
+                        font.pixelSize: 16
+                        wrapMode: Text.WordWrap
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.fillWidth: true
+                    }
+                }
             }
         }
     }
 
-    // Advanced Progress Indicator (The "Loading Bar" look)
     Row {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 20
@@ -77,17 +102,21 @@ Rectangle {
         Repeater {
             model: slideModel.count
             Rectangle {
-                width: 40; height: 4; radius: 2
+                width: 40
+                height: 4
+                radius: 2
                 color: index === presentation.currentIndex ? "#3498db" : "#333"
-                
-                // Animated inner bar for the current slide
+
                 Rectangle {
                     width: index === presentation.currentIndex ? parent.width : 0
                     height: parent.height
                     color: "#ffffff"
                     visible: index === presentation.currentIndex
+
                     PropertyAnimation on width {
-                        from: 0; to: 40; duration: slideTimer.interval
+                        from: 0
+                        to: 40
+                        duration: slideTimer.interval
                         running: index === presentation.currentIndex && slideTimer.running
                     }
                 }
