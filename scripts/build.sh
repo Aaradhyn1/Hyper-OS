@@ -1,35 +1,42 @@
 #!/usr/bin/env bash
-# Hyper OS Raspberry Pi Build Engine (Final)
+# Hyper OS Buildroot Engine (Generic / Platform-Agnostic)
 set -Eeuo pipefail
+trap 'echo "[HYPER-CI] FATAL at line $LINENO"; exit 1' ERR
 
-
+# =========================
 # Paths & Config
-
+# =========================
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG_FILE="${1:-$ROOT_DIR/configs/rpi4_hyper_defconfig}"
+CONFIG_FILE="${1:-$ROOT_DIR/configs/hyper_defconfig}"
 
 BUILDROOT_DIR="${BUILDROOT_DIR:-$ROOT_DIR/buildroot}"
-OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/out/rpi4}"
+OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/out/buildroot}"
 DL_DIR="${DL_DIR:-$ROOT_DIR/dl}"
 CCACHE_DIR="${CCACHE_DIR:-$ROOT_DIR/.ccache}"
 ANALYSIS_DIR="$ROOT_DIR/out/analysis"
 
-OVERLAY_DIR="$ROOT_DIR/board/hyper-os/overlay"
-POST_BUILD_SCRIPT="$ROOT_DIR/board/hyper-os/post-build.sh"
+OVERLAY_DIR="${OVERLAY_DIR:-$ROOT_DIR/overlay}"
+POST_BUILD_SCRIPT="${POST_BUILD_SCRIPT:-$ROOT_DIR/post-build.sh}"
 
-# Version pin (important)
 BUILDROOT_VERSION="2023.11.x"
 
-# Performance
 JOBS="$(nproc)"
 export BR2_DL_DIR="$DL_DIR"
 export BR2_CCACHE_DIR="$CCACHE_DIR"
 
+LOG_TAG="[HYPER-CI]"
+
 # =========================
 # Logging
 # =========================
-log() { printf "\e[38;5;154m[HYPER-CI] [%s] %s\e[0m\n" "$(date '+%T')" "$*"; }
-die() { log "FATAL: $*"; exit 1; }
+log() {
+    local level=$1; shift
+    local color="\e[38;5;154m"
+    [[ "$level" == "ERR" ]] && color="\e[31m"
+    printf "${color}%s %s [%s] %s\e[0m\n" "$(date '+%T')" "$LOG_TAG" "$level" "$*"
+}
+
+die() { log ERR "$*"; exit 1; }
 
 # =========================
 # Validation
@@ -48,18 +55,18 @@ validate_inputs() {
 # Environment Setup
 # =========================
 prepare_env() {
-    log "Preparing environment..."
+    log INFO "Preparing environment..."
 
     mkdir -p "$DL_DIR" "$CCACHE_DIR" "$OUTPUT_DIR" "$ANALYSIS_DIR"
 
     if [[ ! -d "$BUILDROOT_DIR/.git" ]]; then
-        log "Cloning Buildroot ($BUILDROOT_VERSION)..."
-        git clone https://github.com/buildroot/buildroot.git "$BUILDROOT_DIR"
-        git -C "$BUILDROOT_DIR" checkout "$BUILDROOT_VERSION"
+        log INFO "Cloning Buildroot ($BUILDROOT_VERSION)..."
+        git clone --depth=1 --branch "$BUILDROOT_VERSION" https://github.com/buildroot/buildroot.git "$BUILDROOT_DIR"
     else
-        log "Buildroot exists. Syncing version..."
+        log INFO "Syncing Buildroot..."
         git -C "$BUILDROOT_DIR" fetch --depth=1 origin "$BUILDROOT_VERSION"
         git -C "$BUILDROOT_DIR" checkout "$BUILDROOT_VERSION"
+        git -C "$BUILDROOT_DIR" reset --hard "origin/$BUILDROOT_VERSION"
     fi
 }
 
@@ -67,26 +74,31 @@ prepare_env() {
 # Customization Hooks
 # =========================
 apply_customizations() {
-    log "Applying Hyper OS customizations..."
+    log INFO "Applying Hyper OS customizations..."
 
-    [[ -d "$OVERLAY_DIR" ]] || die "Overlay directory missing"
-    [[ -f "$POST_BUILD_SCRIPT" ]] || die "Post-build script missing"
+    [[ -d "$OVERLAY_DIR" ]] && \
+        grep -q "BR2_ROOTFS_OVERLAY" "$CONFIG_FILE" || \
+        echo "BR2_ROOTFS_OVERLAY=\"$OVERLAY_DIR\"" >> "$CONFIG_FILE"
 
-    chmod +x "$POST_BUILD_SCRIPT"
+    if [[ -f "$POST_BUILD_SCRIPT" ]]; then
+        chmod +x "$POST_BUILD_SCRIPT"
+        grep -q "BR2_ROOTFS_POST_BUILD_SCRIPT" "$CONFIG_FILE" || \
+        echo "BR2_ROOTFS_POST_BUILD_SCRIPT=\"$POST_BUILD_SCRIPT\"" >> "$CONFIG_FILE"
+    fi
 }
 
 # =========================
 # Build Pipeline
 # =========================
 execute_pipeline() {
-    log "Loading defconfig: $(basename "$CONFIG_FILE")"
+    log INFO "Loading defconfig: $(basename "$CONFIG_FILE")"
 
     make -C "$BUILDROOT_DIR" \
         O="$OUTPUT_DIR" \
         BR2_DEFCONFIG="$CONFIG_FILE" \
         defconfig
 
-    log "Building system ($JOBS threads)..."
+    log INFO "Starting build ($JOBS threads)..."
 
     flock "$OUTPUT_DIR/.build.lock" \
         make -C "$OUTPUT_DIR" BR2_JLEVEL="$JOBS" all
@@ -96,28 +108,39 @@ execute_pipeline() {
 # Verification
 # =========================
 verify_output() {
-    log "Verifying build artifacts..."
+    log INFO "Verifying build artifacts..."
 
-    local img="$OUTPUT_DIR/images/sdcard.img"
+    local img
+    img=$(find "$OUTPUT_DIR/images" -type f \( -name "*.img" -o -name "*.iso" -o -name "*.ext4" \) | head -n1 || true)
 
-    [[ -f "$img" ]] || die "Missing output image: $img"
+    [[ -n "$img" ]] || die "No output image found"
 
     sha256sum "$img" > "$img.sha256"
 
-    log "Image ready: $img"
+    log INFO "Image ready: $img"
 }
 
 # =========================
 # Telemetry
 # =========================
 generate_telemetry() {
-    log "Generating build analytics..."
+    log INFO "Generating build analytics..."
 
     make -C "$OUTPUT_DIR" graph-build || true
     make -C "$OUTPUT_DIR" graph-size || true
 
+    mkdir -p "$ANALYSIS_DIR"
     mv "$OUTPUT_DIR/graphs"/*.pdf "$ANALYSIS_DIR/" 2>/dev/null || true
 }
+
+# =========================
+# Cleanup
+# =========================
+cleanup() {
+    log INFO "Cleaning temp artifacts..."
+    find "$OUTPUT_DIR" -name "*.stamp" -delete 2>/dev/null || true
+}
+trap cleanup EXIT
 
 # =========================
 # Runtime
@@ -132,7 +155,7 @@ main() {
     verify_output
     generate_telemetry
 
-    log "SUCCESS: Deployment-ready image at $OUTPUT_DIR/images/sdcard.img"
+    log INFO "SUCCESS: Build complete → $OUTPUT_DIR/images"
 }
 
 main "$@"
