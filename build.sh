@@ -1,136 +1,181 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-trap 'echo "[HYPER-BRANDING] ERROR at line $LINENO"; exit 1' ERR
+
+# --- Advanced Environment & Metadata ---
+readonly SCRIPT_NAME="hyper-branding"
+readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
+readonly ROOTFS_DIR="$BUILD_DIR/rootfs"
+
+# Calamares Paths
+readonly BRAND_ID="hyperos"
+readonly CALAMARES_DIR="$ROOTFS_DIR/etc/calamares"
+readonly BRAND_DIR="$CALAMARES_DIR/branding/$BRAND_ID"
+
+# Assets (Expects these in your source tree)
+readonly SOURCE_ASSETS="$ROOT_DIR/assets/branding"
+
+# --- UI Styling Constants ---
+readonly COLOR_BG="#0a0a0a"
+readonly COLOR_ACCENT="#00f2ff"
 
 # =========================
-# Environment
+# Utilities
 # =========================
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
-ROOTFS_DIR="$BUILD_DIR/rootfs"
-
-CALAMARES_DIR="$ROOTFS_DIR/etc/calamares"
-CALAMARES_BRAND_DIR="$CALAMARES_DIR/branding/hyperos"
-QML_OUT="$CALAMARES_BRAND_DIR/show.qml"
-
-log() { printf "\e[36m[HYPER-UI]\e[0m %s\n" "$*"; }
+log() { printf "\e[34m[CORE]\e[0m %s\n" "$*"; }
+info() { printf "\e[36m[INFO]\e[0m %s\n" "$*"; }
+warn() { printf "\e[33m[WARN]\e[0m %s\n" "$*"; }
 die() { printf "\e[31m[FATAL]\e[0m %s\n" "$*" >&2; exit 1; }
 
-require_root() {
-    [[ $EUID -eq 0 ]] || die "Run as root."
+# =========================
+# Core Logic
+# =========================
+
+setup_structure() {
+    info "Initializing branding directory: $BRAND_DIR"
+    mkdir -p "$BRAND_DIR/lang"
 }
 
-require_rootfs() {
-    [[ -d "$ROOTFS_DIR" ]] || die "RootFS not found → run build first"
-}
-
-# =========================
-# UI Generation
-# =========================
-generate_ui() {
-    log "Generating QML slideshow..."
-
-    install -d "$CALAMARES_BRAND_DIR"
-
-    cat > "$QML_OUT" <<'EOF'
+inject_qml_logic() {
+    info "Generating reactive QML Slideshow..."
+    
+    # Using a HEREDOC but with variables for easy theming
+    cat > "$BRAND_DIR/show.qml" <<EOF
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
 Rectangle {
+    id: root
     anchors.fill: parent
-    color: "#050505"
+    color: "$COLOR_BG"
 
-    property int idx: 0
-    property var slides: [
-        { "t": "Hyper OS", "d": "Performance-first Linux.", "i": "⚡" },
-        { "t": "Fast Installs", "d": "Zstd SquashFS pipeline.", "i": "🚀" },
-        { "t": "Low Latency", "d": "Tuned kernel & stack.", "i": "🛠️" }
+    property int currentSlide: 0
+    readonly property var content: [
+        { title: "Hyper OS", desc: "Experience the ultimate kernel tuning.", img: "logo.png" },
+        { title: "Blazing Fast", desc: "Optimized SquashFS with Zstd-19 compression.", img: "speed.png" },
+        { title: "Privacy First", desc: "Hardened defaults with zero telemetry.", img: "shield.png" }
     ]
 
+    // Background Gradient Effect
+    Rectangle {
+        anchors.fill: parent
+        opacity: 0.1
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "$COLOR_ACCENT" }
+            GradientStop { position: 1.0; color: "transparent" }
+        }
+    }
+
     Timer {
-        interval: 7000
-        running: true
-        repeat: true
-        onTriggered: idx = (idx + 1) % slides.length
+        interval: 8000; running: true; repeat: true
+        onTriggered: currentSlide = (currentSlide + 1) % content.length
     }
 
     ColumnLayout {
         anchors.centerIn: parent
-        width: parent.width * 0.6
-        spacing: 16
+        width: parent.width * 0.8
+        spacing: 30
 
-        Text {
-            text: slides[idx].i
-            font.pixelSize: parent.width * 0.07
+        Image {
+            source: content[currentSlide].img
+            Layout.preferredWidth: 128
+            Layout.preferredHeight: 128
             Layout.alignment: Qt.AlignHCenter
+            fillMode: Image.PreserveAspectFit
         }
 
-        Text {
-            text: slides[idx].t
-            color: "white"
-            font.bold: true
-            font.pixelSize: parent.width * 0.035
-            Layout.alignment: Qt.AlignHCenter
-        }
-
-        Text {
-            text: slides[idx].d
-            color: "#aaa"
-            wrapMode: Text.WordWrap
-            horizontalAlignment: Text.AlignHCenter
-            font.pixelSize: parent.width * 0.018
+        Column {
             Layout.fillWidth: true
+            spacing: 10
+            
+            Text {
+                text: content[currentSlide].title
+                color: "white"
+                font.pixelSize: 28
+                font.weight: Font.Bold
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            Text {
+                text: content[currentSlide].desc
+                color: "#888"
+                font.pixelSize: 16
+                width: parent.width
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+            }
         }
     }
 }
 EOF
 }
 
-# =========================
-# Branding Config
-# =========================
-generate_branding() {
-    log "Writing branding.desc..."
+inject_branding_desc() {
+    info "Configuring branding.desc..."
 
-    cat > "$CALAMARES_BRAND_DIR/branding.desc" <<'EOF'
+    cat > "$BRAND_DIR/branding.desc" <<EOF
 ---
-componentName: hyperos
+componentName:   $BRAND_ID
 welcomeStyleCalamares: true
+welcomeExpandingLogo: true
+windowSize: 800,520
+windowResizability: none
+windowPlacement: center
+
 strings:
-  productName: "Hyper OS"
-  shortProductName: "Hyper"
-slideshow: show.qml
+    productName:         "Hyper OS"
+    shortProductName:    "Hyper"
+    productUrl:          "https://hyperos.io"
+    supportUrl:          "https://github.com/hyperos/support"
+    knownIssuesUrl:      "https://github.com/hyperos/issues"
+    releaseNotesUrl:     "https://hyperos.io/blog"
+
+images:
+    productLogo:         "logo.png"
+    productIcon:         "icon.png"
+    welcomeBackground:   "welcome.png"
+
+slideshow:               "show.qml"
+
+style:
+   sidebarBackground:    "$COLOR_BG"
+   sidebarText:          "#FFFFFF"
+   sidebarTextSelect:    "$COLOR_ACCENT"
+   sidebarTextHighlight: "$COLOR_ACCENT"
 EOF
 }
 
-# =========================
-# Validation
-# =========================
-validate_output() {
-    log "Validating branding..."
-
-    [[ -f "$QML_OUT" ]] || die "QML not generated"
-    [[ -f "$CALAMARES_BRAND_DIR/branding.desc" ]] || die "branding.desc missing"
-
-    grep -q "slideshow: show.qml" "$CALAMARES_BRAND_DIR/branding.desc" \
-        || die "Branding misconfigured"
-
-    log "Branding OK"
+sync_assets() {
+    if [[ -d "$SOURCE_ASSETS" ]]; then
+        info "Syncing binary assets (Images/Icons)..."
+        cp -v "$SOURCE_ASSETS"/*.{png,svg} "$BRAND_DIR/" 2>/dev/null || warn "No images found in $SOURCE_ASSETS"
+    else
+        warn "Source assets directory not found. UI might look broken!"
+    fi
 }
 
 # =========================
-# Main
+# Pipeline Entry
 # =========================
 main() {
-    require_root
-    require_rootfs
+    [[ $EUID -eq 0 ]] || die "This script modifies RootFS and must be run as root."
+    [[ -d "$ROOTFS_DIR" ]] || die "RootFS path '$ROOTFS_DIR' not found."
 
-    generate_ui
-    generate_branding
-    validate_output
-
-    log "Calamares branding injected successfully."
+    log "--- Hyper Branding Engine Starting ---"
+    
+    setup_structure
+    sync_assets
+    inject_qml_logic
+    inject_branding_desc
+    
+    # Final check: Calamares looks for branding.desc specifically.
+    if [[ -f "$BRAND_DIR/branding.desc" ]]; then
+        log "Success: Branding for '$BRAND_ID' injected into $CALAMARES_DIR"
+    else
+        die "Pipeline finished but branding.desc is missing."
+    fi
 }
 
 main "$@"
