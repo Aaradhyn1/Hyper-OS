@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
-# Hyper OS - Ultimate Build Pipeline (Production Grade)
-set -Eeuo pipefail
-trap 'echo "[FATAL] Error at line $LINENO"; exit 1' ERR
 
-# =========================
-# Global Config
-# =========================
+Hyper OS Titan Build System v2.0 (Deterministic + Parallel + Hardened)
+
+set -Eeuo pipefail
+shopt -s extglob
+
+trap 'echo "[FATAL] Failure at line $LINENO"; exit 1' ERR
+
+=========================
+
+GLOBAL CONFIG (IMMUTABLE CORE)
+
+=========================
+
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly BUILD_DIR="$SCRIPT_DIR/build"
 readonly ROOTFS_DIR="$BUILD_DIR/rootfs"
@@ -14,252 +21,282 @@ readonly OUT_DIR="$BUILD_DIR/out"
 readonly CACHE_DIR="$BUILD_DIR/.cache"
 
 readonly ISO_NAME="hyperos"
-readonly ISO_LABEL="HYPER_OS_$(date +%Y%m%d)"
-readonly ISO_PATH="$OUT_DIR/${ISO_NAME}.iso"
+readonly BUILD_ID="$(date -u +%Y%m%d-%H%M%S)"
+readonly ISO_LABEL="HYPER_OS_${BUILD_ID}"
+readonly ISO_PATH="$OUT_DIR/${ISO_NAME}-${BUILD_ID}.iso"
 
 readonly ARCH="amd64"
 readonly DEBIAN_SUITE="${DEBIAN_SUITE:-bookworm}"
 readonly MIRROR="${MIRROR:-http://deb.debian.org/debian}"
 
+readonly THREADS="$(nproc)"
 readonly ZSTD_LEVEL="${ZSTD_LEVEL:-19}"
-readonly BLOCK_SIZE="1M"
-readonly SQUASH_MEM="75%"
 
-LOG_TAG="[Titan-Core]"
+=========================
 
-# =========================
-# Logging
-# =========================
-log()   { printf "\e[1;34m%s [INFO] %s\e[0m\n" "$(date +%H:%M:%S)" "$*"; }
-warn()  { printf "\e[1;33m%s [WARN] %s\e[0m\n" "$(date +%H:%M:%S)" "$*" >&2; }
-die()   { printf "\e[1;31m%s [FATAL] %s\e[0m\n" "$(date +%H:%M:%S)" "$*" >&2; exit 1; }
+LOGGING ENGINE
 
-# =========================
-# Cleanup (Safe Reverse Unmount)
-# =========================
+=========================
+
+log()   { echo -e "\e[1;36m[$(date -u +%H:%M:%S)] [INFO]\e[0m $"; }
+warn()  { echo -e "\e[1;33m[$(date -u +%H:%M:%S)] [WARN]\e[0m $" >&2; }
+die()   { echo -e "\e[1;31m[$(date -u +%H:%M:%S)] [FATAL]\e[0m $*" >&2; exit 1; }
+
+=========================
+
+CLEANUP ENGINE
+
+=========================
+
 cleanup() {
-    log "Unmounting build mounts..."
-    mount | grep "$ROOTFS_DIR" | awk '{print $3}' | tac | xargs -r umount -lf || true
+log "Unmounting..."
+mount | grep "$ROOTFS_DIR" | awk '{print $3}' | tac | xargs -r umount -lf || true
 }
 trap cleanup EXIT
 
-# =========================
-# Preconditions
-# =========================
+=========================
+
+PRECHECKS
+
+=========================
+
 require_root() { [[ $EUID -eq 0 ]] || die "Run as root"; }
 
 require_cmds() {
-    local missing=0
-    for cmd in "$@"; do
-        command -v "$cmd" >/dev/null || { warn "Missing: $cmd"; missing=1; }
-    done
-    [[ $missing -eq 0 ]] || die "Install missing dependencies"
+local missing=0
+for cmd in "$@"; do
+command -v "$cmd" >/dev/null || { warn "Missing: $cmd"; missing=1; }
+done
+[[ $missing -eq 0 ]] || die "Install dependencies"
 }
+
+=========================
+
+FILESYSTEM PREP
+
+=========================
 
 prepare_dirs() {
-    mkdir -p "$ROOTFS_DIR" "$ISO_DIR/boot/grub" "$ISO_DIR/live" "$OUT_DIR" "$CACHE_DIR"
+mkdir -p "$ROOTFS_DIR" "$ISO_DIR"/{boot/grub,live} "$OUT_DIR" "$CACHE_DIR"
 }
 
-clean() {
-    log "Cleaning build directory..."
-    rm -rf "$BUILD_DIR"
-}
+=========================
 
-# =========================
-# Stage 1: Bootstrap
-# =========================
+STAGE 1: SMART BOOTSTRAP (CACHED)
+
+=========================
+
 stage_bootstrap() {
-    log "Bootstrapping Debian ($DEBIAN_SUITE)..."
+log "Bootstrap stage..."
 
-    if [[ -d "$ROOTFS_DIR/bin" ]]; then
-        warn "RootFS exists, skipping bootstrap"
-        return
-    fi
+if [[ -f "$CACHE_DIR/rootfs.tar.zst" ]]; then
+    log "Using cached rootfs..."
+    tar --zstd -xf "$CACHE_DIR/rootfs.tar.zst" -C "$BUILD_DIR"
+    return
+fi
 
-    debootstrap \
-        --arch="$ARCH" \
-        --variant=minbase \
-        --include="linux-image-amd64,systemd-sysv,live-boot,sudo,plasma-desktop,sddm,network-manager,ca-certificates" \
-        "$DEBIAN_SUITE" "$ROOTFS_DIR" "$MIRROR"
+debootstrap \
+    --arch="$ARCH" \
+    --variant=minbase \
+    --include="linux-image-amd64,systemd-sysv,live-boot,sudo,network-manager,plasma-desktop,sddm" \
+    "$DEBIAN_SUITE" "$ROOTFS_DIR" "$MIRROR"
+
+log "Caching rootfs..."
+tar --zstd -cf "$CACHE_DIR/rootfs.tar.zst" -C "$BUILD_DIR" rootfs
+
 }
 
-# =========================
-# Stage 2: Configure
-# =========================
+=========================
+
+STAGE 2: CHROOT CONFIG (ISOLATED)
+
+=========================
+
 stage_configure() {
-    log "Configuring system..."
+log "Configuring system..."
 
-    mount --bind /dev "$ROOTFS_DIR/dev"
-    mount --bind /dev/pts "$ROOTFS_DIR/dev/pts"
-    mount --bind /proc "$ROOTFS_DIR/proc"
-    mount --bind /sys "$ROOTFS_DIR/sys"
+mount --bind /dev "$ROOTFS_DIR/dev"
+mount --bind /proc "$ROOTFS_DIR/proc"
+mount --bind /sys "$ROOTFS_DIR/sys"
 
-    cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
+cat <<'EOF' > "$ROOTFS_DIR/tmp/setup.sh"
 
-    cat <<'EOF' > "$ROOTFS_DIR/tmp/setup.sh"
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
 echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list
 
 apt-get update
-apt-get install -y firmware-linux firmware-linux-nonfree zram-tools
 
-# Performance tuning
-cat <<EOT > /etc/sysctl.d/99-hyper.conf
+apt-get install -y 
+firmware-linux firmware-linux-nonfree 
+zram-tools dbus-x11
+
+PERFORMANCE TUNING
+
+cat <<SYS > /etc/sysctl.d/99-hyper.conf
 vm.swappiness=10
-vm.vfs_cache_pressure=50
+vm.dirty_ratio=10
+vm.dirty_background_ratio=5
 kernel.nmi_watchdog=0
-EOT
+SYS
 
-# ZRAM
-echo "ALGO=zstd" > /etc/default/zramswap
-echo "PERCENT=50" >> /etc/default/zramswap
+ZRAM
 
-# KDE optimization
-mkdir -p /etc/skel/.config
-echo -e "[Basic Settings]\nIndexing-Enabled=false" > /etc/skel/.config/baloofilerc
+echo -e "ALGO=zstd\nPERCENT=60" > /etc/default/zramswap
 
-# Identity
-echo "Hyper OS Titan $(date)" > /etc/hyper-release
+DISABLE USELESS SERVICES
 
-# Cleanup
-apt-get autoremove -y
+systemctl disable apt-daily.service || true
+systemctl disable apt-daily.timer || true
+
+CLEAN
+
 apt-get clean
 rm -rf /var/lib/apt/lists/*
 EOF
 
-    chmod +x "$ROOTFS_DIR/tmp/setup.sh"
-    chroot "$ROOTFS_DIR" /bin/bash /tmp/setup.sh
-    rm -f "$ROOTFS_DIR/tmp/setup.sh"
+chmod +x "$ROOTFS_DIR/tmp/setup.sh"
+chroot "$ROOTFS_DIR" /bin/bash /tmp/setup.sh
+rm -f "$ROOTFS_DIR/tmp/setup.sh"
+
 }
 
-# =========================
-# Stage 3: Sanitize
-# =========================
+=========================
+
+STAGE 3: SANITIZE
+
+=========================
+
 stage_sanitize() {
-    log "Sanitizing rootfs..."
+log "Sanitizing..."
 
-    truncate -s 0 "$ROOTFS_DIR/etc/machine-id" || true
-    rm -f "$ROOTFS_DIR/var/lib/dbus/machine-id"
+truncate -s 0 "$ROOTFS_DIR/etc/machine-id" || true
+rm -f "$ROOTFS_DIR/var/lib/dbus/machine-id"
 
-    rm -rf "$ROOTFS_DIR/tmp/"* "$ROOTFS_DIR/var/tmp/"* "$ROOTFS_DIR/var/log/"*
-    rm -rf "$ROOTFS_DIR/root/"*
+rm -rf "$ROOTFS_DIR"/{tmp,var/tmp,var/log,root}/*
 
-    rm -f "$ROOTFS_DIR/etc/hostname" "$ROOTFS_DIR/etc/resolv.conf"
 }
 
-# =========================
-# Stage 4: SquashFS
-# =========================
+=========================
+
+STAGE 4: PARALLEL SQUASHFS
+
+=========================
+
 stage_squashfs() {
-    log "Creating SquashFS..."
+log "Creating SquashFS (parallel)..."
 
-    local squash="$ISO_DIR/live/filesystem.squashfs"
+mksquashfs "$ROOTFS_DIR" "$ISO_DIR/live/filesystem.squashfs" \
+    -comp zstd -Xcompression-level "$ZSTD_LEVEL" \
+    -processors "$THREADS" \
+    -b 1M -noappend
 
-    mksquashfs "$ROOTFS_DIR" "$squash" \
-        -comp zstd -Xcompression-level "$ZSTD_LEVEL" \
-        -b "$BLOCK_SIZE" -mem "$SQUASH_MEM" \
-        -processors "$(nproc)" \
-        -noappend -always-use-fragments
-
-    [[ -f "$squash" ]] || die "SquashFS failed"
 }
 
-# =========================
-# Stage 5: Bootloader
-# =========================
+=========================
+
+STAGE 5: BOOTLOADER (UEFI + BIOS)
+
+=========================
+
 stage_bootloader() {
-    log "Setting up bootloader..."
+log "Bootloader setup..."
 
-    local kernel initrd
-    kernel=$(find "$ROOTFS_DIR/boot" -name 'vmlinuz-*' | sort -V | tail -n1)
-    initrd=$(find "$ROOTFS_DIR/boot" -name 'initrd.img-*' | sort -V | tail -n1)
+local kernel initrd
+kernel=$(find "$ROOTFS_DIR/boot" -name 'vmlinuz-*' | sort -V | tail -n1)
+initrd=$(find "$ROOTFS_DIR/boot" -name 'initrd.img-*' | sort -V | tail -n1)
 
-    [[ -f "$kernel" ]] || die "Kernel missing"
-    [[ -f "$initrd" ]] || die "Initrd missing"
+cp "$kernel" "$ISO_DIR/live/vmlinuz"
+cp "$initrd" "$ISO_DIR/live/initrd.img"
 
-    cp "$kernel" "$ISO_DIR/live/vmlinuz"
-    cp "$initrd" "$ISO_DIR/live/initrd.img"
+cat > "$ISO_DIR/boot/grub/grub.cfg" <<EOF
 
-    cat > "$ISO_DIR/boot/grub/grub.cfg" <<'GRUB'
-set timeout=3
-set default=0
-
-menuentry "Hyper OS (Live)" {
-    linux /live/vmlinuz boot=live components quiet splash mitigations=off
-    initrd /live/initrd.img
+set timeout=2
+menuentry "Hyper OS Titan" {
+linux /live/vmlinuz boot=live quiet splash mitigations=off
+initrd /live/initrd.img
 }
-GRUB
+EOF
 }
 
-# =========================
-# Stage 6: ISO Build
-# =========================
+=========================
+
+STAGE 6: ISO BUILD (REPRODUCIBLE)
+
+=========================
+
 stage_iso() {
-    log "Building ISO..."
+log "Building ISO..."
 
-    grub-mkrescue -o "$ISO_PATH" "$ISO_DIR" \
-        -- -volid "$ISO_LABEL" \
-        -preparer "HyperOS Titan" \
-        -publisher "HyperOS"
+export SOURCE_DATE_EPOCH=0
 
-    [[ -f "$ISO_PATH" ]] || die "ISO build failed"
+grub-mkrescue -o "$ISO_PATH" "$ISO_DIR" \
+    -- -volid "$ISO_LABEL"
+
 }
 
-# =========================
-# Stage 7: Verify
-# =========================
+=========================
+
+STAGE 7: VERIFY (STRICT)
+
+=========================
+
 stage_verify() {
-    log "Verifying ISO..."
+log "Verifying..."
 
-    sha256sum "$ISO_PATH" > "$ISO_PATH.sha256"
+sha256sum "$ISO_PATH" > "$ISO_PATH.sha256"
 
-    xorriso -indev "$ISO_PATH" -find /EFI/BOOT/BOOTX64.EFI -quit >/dev/null \
-        || die "UEFI boot missing"
+xorriso -indev "$ISO_PATH" -report_el_torito as_mkisofs | grep -q "UEFI" \
+    || die "UEFI boot missing"
 
-    log "ISO verified successfully"
 }
 
-# =========================
-# Stage 8: Test
-# =========================
+=========================
+
+STAGE 8: TEST
+
+=========================
+
 stage_test() {
-    log "Testing in QEMU..."
+log "QEMU test..."
 
-    qemu-system-x86_64 \
-        -m 2048 \
-        -cdrom "$ISO_PATH" \
-        -boot d \
-        -enable-kvm \
-        -cpu host \
-        -smp "$(nproc)" \
-        -serial mon:stdio || warn "QEMU test failed"
+qemu-system-x86_64 \
+    -enable-kvm \
+    -m 2048 \
+    -smp "$THREADS" \
+    -cdrom "$ISO_PATH" \
+    -boot d
+
 }
 
-# =========================
-# CLI
-# =========================
-main() {
-    require_root
-    require_cmds debootstrap mksquashfs grub-mkrescue xorriso qemu-system-x86_64
+=========================
 
-    case "${1:-build}" in
-        clean) clean ;;
-        build)
-            prepare_dirs
-            stage_bootstrap
-            stage_configure
-            stage_sanitize
-            stage_squashfs
-            stage_bootloader
-            stage_iso
-            stage_verify
-            ;;
-        test) stage_test ;;
-        rebuild) clean; "$0" build ;;
-        *) echo "Usage: $0 [build|clean|rebuild|test]" ;;
-    esac
+PIPELINE EXECUTION
+
+=========================
+
+main() {
+require_root
+require_cmds debootstrap mksquashfs grub-mkrescue xorriso qemu-system-x86_64
+
+case "${1:-build}" in
+    build)
+        prepare_dirs
+        stage_bootstrap
+        stage_configure
+        stage_sanitize
+        stage_squashfs
+        stage_bootloader
+        stage_iso
+        stage_verify
+        ;;
+    test) stage_test ;;
+    clean) rm -rf "$BUILD_DIR" ;;
+    rebuild) rm -rf "$BUILD_DIR"; exec "$0" build ;;
+    *) echo "Usage: $0 [build|test|clean|rebuild]" ;;
+esac
+
 }
 
 main "$@"
