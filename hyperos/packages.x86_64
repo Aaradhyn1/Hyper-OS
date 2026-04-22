@@ -11,49 +11,47 @@ dbus
 kmod
 
 # =========================
-# Boot & ISO
+# Boot (UEFI-first, clean)
 # =========================
 archiso
 mkinitcpio-archiso
-syslinux
 systemd-boot
 efibootmgr
 
 # =========================
-# Networking
+# Networking (lean + modern)
 # =========================
 networkmanager
 iproute2
-iptables-nft
 iwd
-dhclient
 
 # =========================
-# User & System Tools
+# Essential System Tools
 # =========================
 sudo
 bash-completion
 nano
 less
 htop
-neofetch
+fastfetch
 curl
 wget
 pciutils
 usbutils
+xdg-utils
 
 # =========================
-# Display Stack (X11)
+# Display Stack (X11 minimal stable)
 # =========================
 xorg-server
 xorg-xinit
 xorg-xrandr
 xorg-xsetroot
-xf86-video-vesa
 mesa
+xf86-video-vesa
 
 # =========================
-# Desktop 
+# Desktop Environment (Openbox stack)
 # =========================
 openbox
 lightdm
@@ -61,15 +59,16 @@ lightdm-gtk-greeter
 pcmanfm
 lxappearance
 obconf
+tint2
 
 # =========================
-# Terminal & Shell
+# Terminal
 # =========================
 xterm
 alacritty
 
 # =========================
-# Audio 
+# Audio (PipeWire stack)
 # =========================
 pipewire
 pipewire-alsa
@@ -85,14 +84,25 @@ ntfs-3g
 btrfs-progs
 
 # =========================
-# Installer 
+# Installer (Calamares stable deps)
 # =========================
 calamares
 calamares-settings-arch
 parted
 gptfdisk
+polkit
+qt6-base
+qt6-svg
+qt6-declarative
 
 # =========================
-# Security 
+# Fonts (CRITICAL — don’t skip)
+# =========================
+noto-fonts
+noto-fonts-emoji
+ttf-dejavu
+
+# =========================
+# Security
 # =========================
 ufw
