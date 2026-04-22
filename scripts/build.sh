@@ -41,12 +41,13 @@ OVERLAY_DIR="${OVERLAY_DIR:-$ROOT_DIR/overlay}"
 POST_BUILD_SCRIPT="${POST_BUILD_SCRIPT:-$ROOT_DIR/post-build.sh}"
 
 BUILDROOT_VERSION="2023.11.x"
-JOBS="$(nproc)"
+JOBS="${JOBS:-$(nproc)}"
 
 export BR2_DL_DIR="$DL_DIR"
 export BR2_CCACHE_DIR="$CCACHE_DIR"
 
-LOG_FILE="$LOG_DIR/build_$(date +%s).log"
+BUILD_EPOCH="${SOURCE_DATE_EPOCH:-$(date -u +%s)}"
+LOG_FILE="$LOG_DIR/build_${BUILD_EPOCH}.log"
 mkdir -p "$LOG_DIR"
 
 LOG_TAG="[HYPER-CI]"
@@ -69,6 +70,11 @@ log() {
 }
 
 die() { log ERR "$*"; exit 1; }
+
+utc_date() {
+    local fmt=$1
+    date -u -d "@$BUILD_EPOCH" +"$fmt"
+}
 
 # =========================
 # Validation
@@ -171,7 +177,8 @@ generate_telemetry() {
 
     cat <<EOF > "$ANALYSIS_DIR/build-meta.json"
 {
-  "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "timestamp": "$(utc_date "%Y-%m-%dT%H:%M:%SZ")",
+  "source_date_epoch": $BUILD_EPOCH,
   "duration_sec": $BUILD_DURATION,
   "jobs": $JOBS,
   "buildroot_version": "$BUILDROOT_VERSION",
