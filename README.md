@@ -5,7 +5,7 @@ Hyper OS is built through a single deterministic entrypoint:
 ```bash
 sudo ./build.sh
 ```
-
+ 
 This command produces a bootable ISO image with a fully configured system.
 
 ---
