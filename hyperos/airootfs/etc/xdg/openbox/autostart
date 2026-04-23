@@ -1,28 +1,21 @@
-# Hyper OS Openbox autostart (Production)
+# Hyper OS Openbox autostart (minimal)
 
-# Ensure DBus session (safety for edge cases)
-if command -v dbus-launch >/dev/null 2>&1 && [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+# Ensure DBus session for desktop helpers
+if command -v dbus-launch >/dev/null 2>&1 && [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
   eval "$(dbus-launch --sh-syntax --exit-with-session)"
 fi
 
-# Network Manager tray
-command -v nm-applet >/dev/null && nm-applet &
+# Networking indicator
+command -v nm-applet >/dev/null 2>&1 && nm-applet &
 
-# Set wallpaper (fallback solid color if none)
-command -v feh >/dev/null && feh --bg-scale /usr/share/backgrounds/hyperos/default.jpg || xsetroot -solid "#1e1e2e"
+# PolicyKit authentication agent
+if [ -x /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 ]; then
+  /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
+fi
 
-# Desktop icons + file manager
-command -v pcmanfm >/dev/null && pcmanfm --desktop --profile LXDE &
+# Desktop icons / background handling
+command -v pcmanfm >/dev/null 2>&1 && pcmanfm --desktop --profile LXDE &
 
-# Clipboard manager (prevents copy/paste bugs)
-command -v clipit >/dev/null && clipit &
-
-# PolicyKit agent (required for GUI privilege prompts)
-command -v lxqt-policykit-agent >/dev/null && lxqt-policykit-agent &
-
-# Power manager (laptops)
-command -v xfce4-power-manager >/dev/null && xfce4-power-manager &
-
-# Disable screen blanking
+# Keep screen awake during install/live session
 xset -dpms
 xset s off
