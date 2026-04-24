@@ -11,10 +11,6 @@ efibootmgr
 
 # Installer
 calamares
-hyperos-base
-hyperos-config
-hyperos-theme
-hyperos-openbox-config
 
 # Networking
 networkmanager

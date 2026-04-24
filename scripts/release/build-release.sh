@@ -5,7 +5,6 @@ trap 'echo "[release-build] failed at line $LINENO" >&2' ERR
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROFILE_SRC="${PROFILE_SRC:-$ROOT_DIR/hyperos}"
-REPO_SRC="${REPO_SRC:-$ROOT_DIR/repo}"
 RELEASE_ROOT="${RELEASE_ROOT:-$ROOT_DIR/releases}"
 WORK_ROOT="${WORK_ROOT:-$ROOT_DIR/work/release}"
 
@@ -29,10 +28,6 @@ prepare_profile() {
   mkdir -p "$RELEASE_DIR" "$WORK_DIR" "$LOG_DIR"
   rm -rf "$PROFILE_DIR" "$ARCHISO_WORK"
   cp -a "$PROFILE_SRC" "$PROFILE_DIR"
-  mkdir -p "$PROFILE_DIR/repo"
-  if [[ -d "$REPO_SRC/x86_64" ]]; then
-    cp -a "$REPO_SRC/x86_64" "$PROFILE_DIR/repo/"
-  fi
 
   cat > "$PROFILE_DIR/airootfs/etc/hyper-release" <<META
 HYPER_VERSION=$VERSION
