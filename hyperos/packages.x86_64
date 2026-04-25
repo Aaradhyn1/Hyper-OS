@@ -11,11 +11,6 @@ efibootmgr
 
 # Installer
 calamares
-hyperos-base
-hyperos-config
-hyperos-theme
-hyperos-openbox-config
-hyperos-gaming
 
 # Networking
 networkmanager
@@ -65,11 +60,6 @@ fastfetch
 curl
 wget
 less
-cpupower
-sysstat
-iotop
-smem
-zram-generator
 
 # Fonts
 noto-fonts
