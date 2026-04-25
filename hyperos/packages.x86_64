@@ -23,6 +23,7 @@ xorg-xinit
 xorg-xrandr
 xorg-xsetroot
 mesa
+mesa-demos
 xf86-video-vesa
 openbox
 lightdm
