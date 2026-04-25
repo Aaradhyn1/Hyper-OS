@@ -1,0 +1,23 @@
+pkgname=hyperos-theme
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Hyper OS visual theme assets for GTK, icons, and LightDM'
+arch=('any')
+url='https://github.com/hyper-os'
+license=('custom')
+depends=('gtk3' 'hicolor-icon-theme' 'lightdm' 'lightdm-gtk-greeter')
+source=(
+  'files/usr/share/themes/HyperOS/gtk-3.0/settings.ini'
+  'files/usr/share/icons/HyperOS/scalable/apps/hyperos.svg'
+  'files/usr/share/lightdm-webkit/themes/hyperos/index.html'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+package() {
+  cd "$srcdir/files"
+  cp -a usr "$pkgdir/"
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  cat > "$pkgdir/usr/share/licenses/$pkgname/LICENSE" <<'LIC'
+Hyper OS visual assets.
+LIC
+}

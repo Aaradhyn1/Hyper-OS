@@ -1,0 +1,24 @@
+pkgname=hyperos-base
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Hyper OS base meta-package'
+arch=('any')
+url='https://github.com/hyper-os'
+license=('custom')
+depends=(
+  base linux linux-firmware mkinitcpio systemd dbus
+  networkmanager iwd
+  xorg-server mesa openbox lightdm lightdm-gtk-greeter
+  pipewire wireplumber
+  calamares
+)
+optdepends=(
+  'efibootmgr: UEFI boot entry management'
+  'ufw: simple firewall profile'
+)
+package() {
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  cat > "$pkgdir/usr/share/licenses/$pkgname/LICENSE" <<'LIC'
+Hyper OS meta-package definition.
+LIC
+}
