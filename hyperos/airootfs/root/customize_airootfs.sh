@@ -41,7 +41,6 @@ enable_services() {
   log "Enabling services"
   systemctl enable NetworkManager.service
   systemctl enable lightdm.service
-  systemctl enable cpupower.service 2>/dev/null || true
   systemctl set-default graphical.target
 }
 
