@@ -1,0 +1,12 @@
+[Unit]
+Description=Hyper OS Gaming Profile Daemon
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hyperos-gamed
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

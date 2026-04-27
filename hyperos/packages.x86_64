@@ -1,58 +1,37 @@
-# =========================
-# Core System
-# =========================
+# Core
 base
 linux
 linux-firmware
 mkinitcpio
 systemd
-systemd-sysvcompat
 dbus
-kmod
 
-# =========================
-# Boot (UEFI-first, clean)
-# =========================
-archiso
-mkinitcpio-archiso
-systemd-boot
+# Boot / firmware tools
 efibootmgr
 
-# =========================
-# Networking (lean + modern)
-# =========================
+# Installer
+calamares
+hyperos-base
+hyperos-config
+hyperos-theme
+hyperos-branding
+hyperos-wallpapers
+hyperos-openbox-config
+hyperos-gaming
+
+# Networking
 networkmanager
-iproute2
 iwd
+network-manager-applet
 
-# =========================
-# Essential System Tools
-# =========================
-sudo
-bash-completion
-nano
-less
-htop
-fastfetch
-curl
-wget
-pciutils
-usbutils
-xdg-utils
-
-# =========================
-# Display Stack (X11 minimal stable)
-# =========================
+# Display + desktop (minimal Xorg + Openbox)
 xorg-server
 xorg-xinit
 xorg-xrandr
 xorg-xsetroot
 mesa
+mesa-demos
 xf86-video-vesa
-
-# =========================
-# Desktop Environment (Openbox stack)
-# =========================
 openbox
 lightdm
 lightdm-gtk-greeter
@@ -60,49 +39,47 @@ pcmanfm
 lxappearance
 obconf
 tint2
-
-# =========================
-# Terminal
-# =========================
 xterm
-alacritty
 
-# =========================
-# Audio (PipeWire stack)
-# =========================
+# Audio
 pipewire
 pipewire-alsa
 pipewire-pulse
 wireplumber
 
-# =========================
-# Filesystem & Storage
-# =========================
+# Privilege/auth helpers
+polkit
+polkit-gnome
+
+# Filesystems + install targets
 e2fsprogs
 dosfstools
 ntfs-3g
 btrfs-progs
-
-# =========================
-# Installer (Calamares stable deps)
-# =========================
-calamares
-calamares-settings-arch
 parted
 gptfdisk
-polkit
-qt6-base
-qt6-svg
-qt6-declarative
 
-# =========================
-# Fonts (CRITICAL — don’t skip)
-# =========================
+# Base utilities
+sudo
+nano
+htop
+fastfetch
+curl
+wget
+less
+pciutils
+cpupower
+irqbalance
+sysstat
+iotop
+smem
+zram-generator
+zenity
+
+# Fonts
 noto-fonts
 noto-fonts-emoji
 ttf-dejavu
 
-# =========================
-# Security
-# =========================
+# Security (optional but included in baseline)
 ufw

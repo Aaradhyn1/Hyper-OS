@@ -1,0 +1,10 @@
+# Hyper OS default gaming profile
+PROFILE_NAME="default"
+CPU_GOVERNOR="schedutil"
+USE_GAMEMODE="1"
+NICE_LEVEL="0"
+GPU_OFFLOAD="auto"
+PROCESS_MATCH="steam_app_|wine|wine64|lutris"
+ENV_WINEESYNC="1"
+ENV_WINEFSYNC="1"
+ENV_MANGOHUD="0"
