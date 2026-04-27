@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=HyperOS Gaming
+Comment=Gaming optimization control panel
+Exec=/usr/local/bin/hyperos-gaming-ui
+Icon=applications-games
+Terminal=false
+Categories=Game;System;

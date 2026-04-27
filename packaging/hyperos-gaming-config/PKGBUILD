@@ -1,0 +1,27 @@
+pkgname=hyperos-gaming-config
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Hyper OS gaming orchestration profiles and kernel tuning defaults'
+arch=('any')
+url='https://github.com/hyper-os'
+license=('custom')
+backup=(
+  'etc/hyperos/game-profiles/default.profile'
+  'etc/hyperos/game-profiles/competitive.profile'
+  'etc/hyperos/game-profiles/silent.profile'
+)
+source=(
+  'files/etc/hyperos/game-profiles/default.profile'
+  'files/etc/hyperos/game-profiles/competitive.profile'
+  'files/etc/hyperos/game-profiles/silent.profile'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+package() {
+  cd "$srcdir/files"
+  cp -a etc "$pkgdir/"
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  cat > "$pkgdir/usr/share/licenses/$pkgname/LICENSE" <<'LIC'
+Hyper OS gaming profile configs.
+LIC
+}

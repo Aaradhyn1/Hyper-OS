@@ -1,0 +1,10 @@
+# Lower-latency profile for competitive games
+PROFILE_NAME="competitive"
+CPU_GOVERNOR="performance"
+USE_GAMEMODE="1"
+NICE_LEVEL="-4"
+GPU_OFFLOAD="nvidia"
+PROCESS_MATCH="steam_app_|wine|wine64"
+ENV_WINEESYNC="1"
+ENV_WINEFSYNC="1"
+ENV_MANGOHUD="0"

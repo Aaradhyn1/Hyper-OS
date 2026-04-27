@@ -35,6 +35,32 @@ configure_live_user() {
 Defaults:%wheel !authenticate
 SUDOERS
   chmod 0440 /etc/sudoers.d/99_hyper_live
+
+  if [[ -f /etc/hyperos/game-profiles/default.profile ]]; then
+    ln -sfn /etc/hyperos/game-profiles/default.profile /etc/hyperos/game-profiles/current.profile
+  fi
+}
+
+}
+
+configure_live_user() {
+  log "Configuring live user"
+  if ! id -u "$LIVE_USER" >/dev/null 2>&1; then
+    useradd -m -G wheel,audio,video,storage,network -s /bin/bash "$LIVE_USER"
+  fi
+
+  passwd -d "$LIVE_USER" >/dev/null 2>&1 || true
+  passwd -l root >/dev/null 2>&1 || true
+
+  install -d -m 0755 -o "$LIVE_USER" -g "$LIVE_USER" "$LIVE_HOME/.config/openbox"
+  install -m 0644 /etc/xdg/openbox/autostart "$LIVE_HOME/.config/openbox/autostart"
+  chown "$LIVE_USER:$LIVE_USER" "$LIVE_HOME/.config/openbox/autostart"
+
+  cat > /etc/sudoers.d/99_hyper_live <<'SUDOERS'
+%wheel ALL=(ALL:ALL) NOPASSWD: ALL
+Defaults:%wheel !authenticate
+SUDOERS
+  chmod 0440 /etc/sudoers.d/99_hyper_live
 }
 
 enable_services() {
