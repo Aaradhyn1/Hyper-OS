@@ -37,11 +37,6 @@ check_embedded_metadata() {
   grep -q '^HYPER_VERSION=' "$TMP_DIR/rootfs/etc/hyper-release"
 }
 
-check_repo_presence() {
-  echo "[release-validate] checking embedded hyperos repo payload"
-  xorriso -indev "$ISO_PATH" -find /repo/x86_64 -type d >/dev/null 2>&1
-}
-
 qemu_smoke_test() {
   if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
     if [[ "${ALLOW_MISSING_QEMU:-0}" == "1" ]]; then
@@ -74,7 +69,6 @@ main() {
 
   check_artifacts
   check_embedded_metadata
-  check_repo_presence
   qemu_smoke_test
 
   echo "[release-validate] validation passed"

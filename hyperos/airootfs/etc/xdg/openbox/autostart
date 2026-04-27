@@ -1,19 +1,21 @@
-# Hyper OS Openbox autostart
+# Hyper OS Openbox autostart (minimal)
 
+# Ensure DBus session for desktop helpers
 if command -v dbus-launch >/dev/null 2>&1 && [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
   eval "$(dbus-launch --sh-syntax --exit-with-session)"
 fi
 
-xsetroot -solid "#0B0F14"
-
-command -v tint2 >/dev/null 2>&1 && tint2 &
+# Networking indicator
 command -v nm-applet >/dev/null 2>&1 && nm-applet &
 
+# PolicyKit authentication agent
 if [ -x /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 ]; then
   /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
 fi
 
+# Desktop icons / background handling
 command -v pcmanfm >/dev/null 2>&1 && pcmanfm --desktop --profile LXDE &
 
+# Keep screen awake during install/live session
 xset -dpms
 xset s off
