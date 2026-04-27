@@ -1,0 +1,10 @@
+# Thermals/noise-prioritized profile
+PROFILE_NAME="silent"
+CPU_GOVERNOR="schedutil"
+USE_GAMEMODE="0"
+NICE_LEVEL="5"
+GPU_OFFLOAD="auto"
+PROCESS_MATCH="steam_app_|lutris"
+ENV_WINEESYNC="1"
+ENV_WINEFSYNC="1"
+ENV_MANGOHUD="0"
