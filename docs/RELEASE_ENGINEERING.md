@@ -10,12 +10,8 @@ Version metadata is embedded in:
 - `/etc/motd`
 
 ## Build Pipeline
-0. `scripts/repo/build-packages.sh` + `scripts/repo/publish-repo.sh`
-   - build first-party packages
-   - refresh `hyperos` pacman repository metadata
 1. `scripts/release/build-release.sh`
    - copies `hyperos/` profile into an isolated work directory
-   - injects `repo/x86_64` into ISO profile payload
    - injects release metadata
    - runs `mkarchiso`
    - writes checksum + `build-meta.json`

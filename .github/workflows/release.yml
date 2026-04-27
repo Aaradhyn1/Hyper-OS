@@ -6,11 +6,8 @@ on:
     branches: [ "main", "work" ]
     paths:
       - 'hyperos/**'
-      - 'packaging/**'
-      - 'repo/**'
       - 'configs/calamares/**'
       - 'scripts/release/**'
-      - 'scripts/repo/**'
       - '.github/workflows/release.yml'
 
 jobs:
@@ -28,12 +25,7 @@ jobs:
       - name: Install build dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm archiso jq squashfs-tools xorriso qemu-desktop edk2-ovmf base-devel devtools
-
-      - name: Build first-party packages
-        run: |
-          USE_CHROOT=0 ./scripts/repo/build-packages.sh
-          SIGN_REPO=0 ./scripts/repo/publish-repo.sh
+          pacman -S --noconfirm archiso jq squashfs-tools xorriso qemu-desktop edk2-ovmf
 
       - name: Build release artifacts
         run: |

@@ -6,9 +6,6 @@ arch=('any')
 url='https://github.com/hyper-os'
 license=('custom')
 depends=(
-  hyperos-gaming-config
-  hyperos-gamed
-  hyperos-gaming-ui
   steam lutris
   wine winetricks
   dxvk vkd3d
