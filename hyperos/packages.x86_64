@@ -1,26 +1,70 @@
+# Core
 base
 linux
 linux-firmware
+mkinitcpio
 systemd
+dbus
+
+# Boot / firmware tools
+efibootmgr
+
+# Installer
+calamares
+
+# Networking
 networkmanager
-sudo
+iwd
+network-manager-applet
+
+# Display + desktop (minimal Xorg + Openbox)
 xorg-server
 xorg-xinit
+xorg-xrandr
+xorg-xsetroot
+mesa
+mesa-demos
+xf86-video-vesa
 openbox
 lightdm
 lightdm-gtk-greeter
 pcmanfm
+lxappearance
+obconf
+tint2
 xterm
-archiso
-mkinitcpio-archiso
-syslinux
-systemd-bootctl
+
+# Audio
+pipewire
+pipewire-alsa
+pipewire-pulse
+wireplumber
+
+# Privilege/auth helpers
+polkit
+polkit-gnome
+
+# Filesystems + install targets
+e2fsprogs
+dosfstools
+ntfs-3g
+btrfs-progs
+parted
+gptfdisk
+
+# Base utilities
+sudo
 nano
-python
-gamemode
-mangohud
-steam
-lutris
-wine
-winetricks
-vulkan-tools
+htop
+fastfetch
+curl
+wget
+less
+
+# Fonts
+noto-fonts
+noto-fonts-emoji
+ttf-dejavu
+
+# Security (optional but included in baseline)
+ufw

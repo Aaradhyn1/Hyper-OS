@@ -1,52 +1,89 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# --- Advanced Configuration ---
-LOG_TAG="[Net-Pro]"
-NIC=$(ip route | grep default | awk '{print $5}' | head -n1)
+# --- CONFIGURATION ---
+LOG_TAG="\e[1;36m[NET-ULTRA-PRO]\e[0m"
+NIC=$(ip route show to default | awk '{print $5}' | head -n1)
+CPU_CORES=$(nproc)
+RPS_MASK=$(printf '%x' $(( (1 << CPU_CORES) - 2 )))
 
-log() { printf '%s %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$LOG_TAG" "$1"; }
+log() { printf "${LOG_TAG} $(date +%H:%M:%S) %s\n" "$1"; }
 
-[[ "$EUID" -ne 0 ]] && { echo "Root required." >&2; exit 1; }
+# 1. PRE-FLIGHT & KERNEL MODULES
+log "Loading advanced kernel modules..."
+modprobe -a tcp_bbr sch_fq fq_codel xt_REDIRECT 2>/dev/null || true
 
-# 1. Sysctl & DNS Profile Deployment
-log "Deploying kernel and DNS profiles..."
-install -D -m 0644 configs/networking/sysctl-low-latency.conf /etc/sysctl.d/98-hyperos-network-low-latency.conf
-install -D -m 0644 configs/networking/resolved.conf /etc/systemd/resolved.conf.d/10-hyperos-low-latency.conf
-
-sysctl -p /etc/sysctl.d/98-hyperos-network-low-latency.conf >/dev/null
-
-# 2. Hardware-Level Tuning (Eth/Wi-Fi)
-if [[ -n "$NIC" ]]; then
-    log "Optimizing Interface: $NIC"
-    # Disable Energy Efficient Ethernet (EEE) to prevent wake-up latency
-    ethtool --set-eee "$NIC" eee off 2>/dev/null || true
-    # Increase Ring Buffer size to prevent packet drops during bursts
-    ethtool -G "$NIC" rx 4096 tx 4096 2>/dev/null || true
-    # Disable Interrupt Coalescing (Sacrifices CPU for raw latency reduction)
-    ethtool -C "$NIC" rx-usecs 0 tx-usecs 0 2>/dev/null || true
-fi
-
-# 3. DNS-over-TLS & Caching Setup
-log "Configuring systemd-resolved (DoT + Stub)..."
-systemctl enable --now systemd-resolved
-ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-
-# 4. IRQ Affinity (Pinning Network Interrupts)
-# Prevents network processing from jumping between CPU cores (reduces jitter)
+# 2. IRQ PINNING
 if command -v irqbalance >/dev/null; then
-    log "Tuning irqbalance for low-latency mode..."
-    sed -i 's/IRQBALANCE_ONESHOT=0/IRQBALANCE_ONESHOT=1/' /etc/default/irqbalance 2>/dev/null || true
-    systemctl restart irqbalance || true
+    log "Disabling irqbalance..."
+    systemctl stop irqbalance 2>/dev/null || true
+    systemctl disable irqbalance 2>/dev/null || true
 fi
 
-# 5. Apply & Validate
-log "Restarting network stack components..."
-systemctl restart systemd-resolved
+log "Pinning IRQs for $NIC..."
+i=1
+for irq in $(grep "$NIC" /proc/interrupts | awk '{print $1}' | tr -d ':'); do
+    printf '%x' $((1 << i)) > "/proc/irq/$irq/smp_affinity"
+    i=$(( (i + 1) % CPU_CORES ))
+    [ "$i" -eq 0 ] && i=1
+done
 
-log "------------------------------------------------"
-log "SUCCESS: Network Latency Optimized"
-log "NIC: $NIC"
-log "DNS: $(resolvectl query google.com | grep 'Server:' | awk '{print $2}')"
-log "Validation: ping -c 5 1.1.1.1 (Watch for jitter/mdev)"
-log "------------------------------------------------"
+# 3. SYSCTL TUNING
+log "Applying sysctl tuning..."
+cat <<EOF > /etc/sysctl.d/99-ultra-performance.conf
+net.core.netdev_max_backlog = 16384
+net.core.somaxconn = 8192
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_sack = 1
+
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_rfc1337 = 1
+EOF
+
+sysctl --system >/dev/null
+
+# 4. RPS/XPS
+log "Configuring RPS/XPS..."
+for q in /sys/class/net/$NIC/queues/rx-*; do
+    echo "$RPS_MASK" > "$q/rps_cpus" 2>/dev/null || true
+    echo 4096 > "$q/rps_flow_cnt" 2>/dev/null || true
+done
+
+for q in /sys/class/net/$NIC/queues/tx-*; do
+    echo "$RPS_MASK" > "$q/xps_cpus" 2>/dev/null || true
+done
+
+echo 32768 > /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null || true
+
+# 5. ETHTOOL OPTIMIZATION
+log "Optimizing NIC features..."
+ethtool -K "$NIC" gro on gso on tso on lro off rx on tx on 2>/dev/null || true
+ethtool -C "$NIC" adaptive-rx on adaptive-tx on rx-usecs 50 tx-usecs 50 2>/dev/null || true
+ethtool -G "$NIC" rx 4096 tx 4096 2>/dev/null || true
+
+# 6. XDP MODE
+if command -v bpftool >/dev/null; then
+    log "Setting XDP native mode..."
+    ip link set dev "$NIC" xdp off 2>/dev/null || true
+fi
+
+# 7. FINAL
+log "Configuration Complete."
+printf "\e[1;32mOPTIMIZATION SUMMARY:\e[0m\n"
+echo "-----------------------------------"
+echo "NIC: $NIC"
+echo "RPS Mask: $RPS_MASK"
+echo "Congestion: $(sysctl -n net.ipv4.tcp_congestion_control)"
+echo "Queuing: $(sysctl -n net.core.default_qdisc)"
+echo "-----------------------------------"
