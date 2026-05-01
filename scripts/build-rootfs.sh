@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+ #!/usr/bin/env bash
 set -Eeuo pipefail
 trap 'echo "[HyperOS-RootFS] ERROR at line $LINENO"; exit 1' ERR
 
