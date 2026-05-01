@@ -16,3 +16,11 @@ mkinitcpio-archiso
 syslinux
 systemd-bootctl
 nano
+python
+gamemode
+mangohud
+steam
+lutris
+wine
+winetricks
+vulkan-tools
