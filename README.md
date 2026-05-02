@@ -97,3 +97,19 @@ Apply profile:
 ```bash
 sudo ./scripts/apply-network-low-latency.sh
 ```
+
+## Unified gaming optimization platform
+
+Hyper OS now includes:
+
+- `hyperos-gamed` (automatic per-game system profile daemon)
+- `hyperos-game-launch` (Steam/Lutris launch wrapper)
+- `hyperos-gaming-ui` (lightweight control panel)
+- editable profiles in `/etc/hyperos/game-profiles/`
+
+See full guide:
+
+- `docs/HYPEROS_GAMING_PLATFORM.md`
+- `docs/HYPEROS_TOP50_GAME_COMPATIBILITY.md`
+- `docs/HYPEROS_BRANDING_UX.md`
+- `docs/HYPEROS_CLOUD_PROFILES.md`

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "game_name": "Counter-Strike 2",
+  "launcher": "steam",
+  "proton_version": "native",
+  "environment_variables": {
+    "MANGOHUD": "0",
+    "WINEESYNC": "1",
+    "WINEFSYNC": "1"
+  },
+  "dxvk_config": {
+    "DXVK_HUD": "0",
+    "DXVK_ASYNC": "1"
+  },
+  "vkd3d_config": {
+    "VKD3D_CONFIG": ""
+  },
+  "gamemode": true,
+  "notes": "Cloud baseline for low-latency competitive setup"
+}
