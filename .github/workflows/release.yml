@@ -1,0 +1,49 @@
+name: hyperos-release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "work" ]
+    paths:
+      - 'hyperos/**'
+      - 'configs/calamares/**'
+      - 'scripts/release/**'
+      - '.github/workflows/release.yml'
+
+jobs:
+  build-and-validate:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    env:
+      TZ: UTC
+      LC_ALL: C
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm archiso jq squashfs-tools xorriso qemu-desktop edk2-ovmf
+
+      - name: Build release artifacts
+        run: |
+          export HYPER_VERSION="$(date -u +%Y.%m.%d)"
+          # SOURCE_DATE_EPOCH from git for reproducibility in CI
+          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+          ./scripts/release/build-release.sh
+
+      - name: Validate latest ISO
+        run: |
+          ISO_PATH="$(find releases -type f -name '*.iso' | sort | tail -n1)"
+          test -n "$ISO_PATH"
+          ./scripts/release/validate-iso.sh "$ISO_PATH"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyperos-release
+          path: |
+            releases/**
+          if-no-files-found: error

@@ -1,55 +1,80 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ln -sf /usr/share/zoneinfo/UTC /etc/localtime
-hwclock --systohc
+LIVE_USER="hyper"
+LIVE_HOME="/home/${LIVE_USER}"
 
-echo 'en_US.UTF-8 UTF-8' > /etc/locale.gen
-locale-gen
-echo 'LANG=en_US.UTF-8' > /etc/locale.conf
+log() { printf '[airootfs] %s\n' "$*"; }
 
-useradd -m -G wheel,audio,video -s /bin/bash hyper
-passwd -l hyper
-passwd -l root
-
-chmod 0440 /etc/sudoers.d/wheel
-
-enable_unit() {
-  local unit="$1"
-  local wants_dir="/etc/systemd/system/multi-user.target.wants"
-  local unit_path="/usr/lib/systemd/system/$unit"
-  mkdir -p "$wants_dir"
-  [[ -f "$unit_path" ]] || { echo "Missing unit file: $unit" >&2; exit 1; }
-  ln -snf "$unit_path" "$wants_dir/$unit"
+configure_locale() {
+  log "Configuring locale"
+  echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
+  locale-gen
+  cat > /etc/locale.conf <<LOCALE
+LANG=en_US.UTF-8
+LC_TIME=C
+LOCALE
+  ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 }
 
-enable_timer() {
-  local unit="$1"
-  local wants_dir="/etc/systemd/system/timers.target.wants"
-  local unit_path="/usr/lib/systemd/system/$unit"
-  [[ -f "$unit_path" ]] || unit_path="/etc/systemd/system/$unit"
-  mkdir -p "$wants_dir"
-  [[ -f "$unit_path" ]] || { echo "Missing timer unit file: $unit" >&2; exit 1; }
-  ln -snf "$unit_path" "$wants_dir/$unit"
+configure_live_user() {
+  log "Configuring live user"
+  if ! id -u "$LIVE_USER" >/dev/null 2>&1; then
+    useradd -m -G wheel,audio,video,storage,network -s /bin/bash "$LIVE_USER"
+  fi
+
+  passwd -d "$LIVE_USER" >/dev/null 2>&1 || true
+  passwd -l root >/dev/null 2>&1 || true
+
+  install -d -m 0755 -o "$LIVE_USER" -g "$LIVE_USER" "$LIVE_HOME/.config/openbox"
+  install -m 0644 /etc/xdg/openbox/autostart "$LIVE_HOME/.config/openbox/autostart"
+  chown "$LIVE_USER:$LIVE_USER" "$LIVE_HOME/.config/openbox/autostart"
+
+  cat > /etc/sudoers.d/99_hyper_live <<'SUDOERS'
+%wheel ALL=(ALL:ALL) NOPASSWD: ALL
+Defaults:%wheel !authenticate
+SUDOERS
+  chmod 0440 /etc/sudoers.d/99_hyper_live
+
+  if [[ -f /etc/hyperos/game-profiles/default.profile ]]; then
+    ln -sfn /etc/hyperos/game-profiles/default.profile /etc/hyperos/game-profiles/current.profile
+  fi
 }
 
-cat > /etc/systemd/system/hyper-firstboot.service <<'UNIT'
-[Unit]
-Description=Hyper OS first boot user setup
-After=multi-user.target
+}
 
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/hyper-firstboot
-RemainAfterExit=true
+configure_live_user() {
+  log "Configuring live user"
+  if ! id -u "$LIVE_USER" >/dev/null 2>&1; then
+    useradd -m -G wheel,audio,video,storage,network -s /bin/bash "$LIVE_USER"
+  fi
 
-[Install]
-WantedBy=multi-user.target
-UNIT
+  passwd -d "$LIVE_USER" >/dev/null 2>&1 || true
+  passwd -l root >/dev/null 2>&1 || true
 
-enable_unit NetworkManager.service
-enable_unit lightdm.service
-ln -snf /etc/systemd/system/hyper-firstboot.service /etc/systemd/system/multi-user.target.wants/hyper-firstboot.service
-enable_unit hyperos-gamed.service
-enable_timer hyperos-profile-update.timer
-ln -snf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
+  install -d -m 0755 -o "$LIVE_USER" -g "$LIVE_USER" "$LIVE_HOME/.config/openbox"
+  install -m 0644 /etc/xdg/openbox/autostart "$LIVE_HOME/.config/openbox/autostart"
+  chown "$LIVE_USER:$LIVE_USER" "$LIVE_HOME/.config/openbox/autostart"
+
+  cat > /etc/sudoers.d/99_hyper_live <<'SUDOERS'
+%wheel ALL=(ALL:ALL) NOPASSWD: ALL
+Defaults:%wheel !authenticate
+SUDOERS
+  chmod 0440 /etc/sudoers.d/99_hyper_live
+}
+
+enable_services() {
+  log "Enabling services"
+  systemctl enable NetworkManager.service
+  systemctl enable lightdm.service
+  systemctl set-default graphical.target
+}
+
+main() {
+  configure_locale
+  configure_live_user
+  enable_services
+  log "Customization complete"
+}
+
+main "$@"
