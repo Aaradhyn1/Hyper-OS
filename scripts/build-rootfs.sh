@@ -47,10 +47,19 @@ EOF
   # This is much safer than manual mount/chroot
   log INFO "Running internal OS provisioning via nspawn"
   systemd-nspawn -D "$ROOTFS_DIR" /bin/bash <<EOF
-    set -e
+    set -euo pipefail
     # Create user with a pre-locked or specific password configuration
     useradd -m -s /bin/bash "$USERNAME"
-    echo "$USERNAME:hyperos" | chpasswd
+    if [[ -n "${USER_PASSWORD_HASH:-}" ]]; then
+      usermod -p "${USER_PASSWORD_HASH}" "$USERNAME"
+    else
+      passwd -l "$USERNAME"
+    fi
+    if [[ -n "${ROOT_PASSWORD_HASH:-}" ]]; then
+      usermod -p "${ROOT_PASSWORD_HASH}" root
+    else
+      passwd -l root
+    fi
     usermod -aG sudo,video,audio "$USERNAME"
     
     # Force kernel to update initramfs inside the rootfs
