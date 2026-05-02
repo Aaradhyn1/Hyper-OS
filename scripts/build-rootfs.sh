@@ -117,11 +117,27 @@ net.core.somaxconn = 4096
 net.core.netdev_max_backlog = 8192
 EOF
 
-  cat > "$ROOTFS_DIR/etc/security/limits.d/99-hyperos.conf" <<EOF
-* soft nofile 1048576
-* hard nofile 1048576
-* soft memlock unlimited
-* hard memlock unlimited
+  # 4. Use systemd-nspawn for safe configuration
+  # This is much safer than manual mount/chroot
+  log INFO "Running internal OS provisioning via nspawn"
+  systemd-nspawn -D "$ROOTFS_DIR" /bin/bash <<EOF
+    set -euo pipefail
+    # Create user with a pre-locked or specific password configuration
+    useradd -m -s /bin/bash "$USERNAME"
+    if [[ -n "${USER_PASSWORD_HASH:-}" ]]; then
+      usermod -p "${USER_PASSWORD_HASH}" "$USERNAME"
+    else
+      passwd -l "$USERNAME"
+    fi
+    if [[ -n "${ROOT_PASSWORD_HASH:-}" ]]; then
+      usermod -p "${ROOT_PASSWORD_HASH}" root
+    else
+      passwd -l root
+    fi
+    usermod -aG sudo,video,audio "$USERNAME"
+    
+    # Force kernel to update initramfs inside the rootfs
+    update-initramfs -u
 EOF
 
   cat > "$ROOTFS_DIR/etc/default/irqbalance" <<EOF

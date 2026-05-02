@@ -42,11 +42,9 @@ log()   { echo -e "\e[1;36m[$(date -u +%H:%M:%S)] [INFO]\e[0m $"; }
 warn()  { echo -e "\e[1;33m[$(date -u +%H:%M:%S)] [WARN]\e[0m $" >&2; }
 die()   { echo -e "\e[1;31m[$(date -u +%H:%M:%S)] [FATAL]\e[0m $*" >&2; exit 1; }
 
-=========================
 
 CLEANUP ENGINE
 
-=========================
 
 cleanup() {
 log "Unmounting..."
@@ -70,11 +68,9 @@ done
 [[ $missing -eq 0 ]] || die "Install dependencies"
 }
 
-=========================
 
 FILESYSTEM PREP
 
-=========================
 
 prepare_dirs() {
 mkdir -p "$ROOTFS_DIR" "$ISO_DIR"/{boot/grub,live} "$OUT_DIR" "$CACHE_DIR"
@@ -194,11 +190,9 @@ mksquashfs "$ROOTFS_DIR" "$ISO_DIR/live/filesystem.squashfs" \
 
 }
 
-=========================
 
 STAGE 5: BOOTLOADER (UEFI + BIOS)
 
-=========================
 
 stage_bootloader() {
 log "Bootloader setup..."
