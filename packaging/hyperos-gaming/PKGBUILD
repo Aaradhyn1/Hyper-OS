@@ -1,0 +1,29 @@
+pkgname=hyperos-gaming
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Hyper OS gaming and Windows compatibility meta-package'
+arch=('any')
+url='https://github.com/hyper-os'
+license=('custom')
+depends=(
+  steam lutris
+  wine winetricks
+  dxvk vkd3d
+  gamemode mangohud
+  vulkan-tools vulkan-icd-loader
+  lib32-vulkan-icd-loader
+  lib32-mesa
+  lib32-gamemode
+  lib32-mangohud
+)
+optdepends=(
+  'vulkan-intel: Vulkan support for Intel GPUs'
+  'vulkan-radeon: Vulkan support for AMD GPUs'
+  'nvidia nvidia-utils lib32-nvidia-utils: Vulkan/OpenGL support for NVIDIA GPUs'
+)
+package() {
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  cat > "$pkgdir/usr/share/licenses/$pkgname/LICENSE" <<'LIC'
+Hyper OS gaming meta-package definition.
+LIC
+}

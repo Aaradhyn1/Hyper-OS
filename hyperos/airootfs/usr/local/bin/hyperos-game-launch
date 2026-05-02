@@ -41,12 +41,9 @@ done
 [[ $# -gt 0 ]] || { echo "Game command is required" >&2; exit 2; }
 
 profile_file="$PROFILE_DIR/$profile_name.conf"
-if [[ ! -f "$profile_file" ]]; then
-  echo "Profile not found: $profile_file (falling back to raw launch)" >&2
-  exec "$@"
-fi
+[[ -f "$profile_file" ]] || { echo "Profile not found: $profile_file" >&2; exit 1; }
 
-unset PROFILE_NAME PROCESS_MATCH CPU_GOVERNOR IO_SCHEDULER ENV_VARS NICE_LEVEL ENABLE_GAMEMODE NVIDIA_OFFLOAD PROTON_VERSION DXVK_HUD DXVK_ASYNC VKD3D_CONFIG WINE_ESYNC WINE_FSYNC MANGOHUD
+unset PROFILE_NAME PROCESS_MATCH CPU_GOVERNOR IO_SCHEDULER ENV_VARS NICE_LEVEL ENABLE_GAMEMODE NVIDIA_OFFLOAD
 # shellcheck source=/dev/null
 source "$profile_file"
 
@@ -63,14 +60,6 @@ if [[ "${NVIDIA_OFFLOAD:-0}" == "1" ]]; then
   export __GLX_VENDOR_LIBRARY_NAME=nvidia
   export __VK_LAYER_NV_optimus=NVIDIA_only
 fi
-
-[[ -n "${PROTON_VERSION:-}" ]] && export HYPEROS_PROTON_VERSION="$PROTON_VERSION"
-[[ -n "${DXVK_HUD:-}" ]] && export DXVK_HUD="$DXVK_HUD"
-[[ -n "${DXVK_ASYNC:-}" ]] && export DXVK_ASYNC="$DXVK_ASYNC"
-[[ -n "${VKD3D_CONFIG:-}" ]] && export VKD3D_CONFIG="$VKD3D_CONFIG"
-[[ -n "${WINE_ESYNC:-}" ]] && export WINEESYNC="$WINE_ESYNC"
-[[ -n "${WINE_FSYNC:-}" ]] && export WINEFSYNC="$WINE_FSYNC"
-[[ -n "${MANGOHUD:-}" ]] && export MANGOHUD="$MANGOHUD"
 
 if [[ -n "${NICE_LEVEL:-}" ]]; then
   renice -n "$NICE_LEVEL" $$ >/dev/null 2>&1 || true

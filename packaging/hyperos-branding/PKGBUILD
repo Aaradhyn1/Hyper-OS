@@ -1,0 +1,35 @@
+pkgname=hyperos-branding
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Hyper OS visual identity and UX configuration bundle'
+arch=('any')
+url='https://github.com/hyper-os'
+license=('custom')
+depends=('lightdm' 'lightdm-gtk-greeter' 'openbox' 'tint2' 'fastfetch')
+backup=(
+  'etc/lightdm/lightdm-gtk-greeter.conf'
+  'etc/xdg/openbox/autostart'
+  'etc/xdg/openbox/rc.xml'
+  'etc/xdg/tint2/tint2rc'
+  'etc/skel/.bashrc'
+)
+source=(
+  'files/etc/lightdm/lightdm-gtk-greeter.conf'
+  'files/etc/xdg/openbox/autostart'
+  'files/etc/xdg/openbox/rc.xml'
+  'files/etc/xdg/tint2/tint2rc'
+  'files/etc/xdg/fastfetch/config.jsonc'
+  'files/etc/skel/.bashrc'
+  'files/usr/share/hyperos/branding/tagline.txt'
+  'files/usr/share/applications/hyperos-gaming-ui.desktop'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+package() {
+  cd "$srcdir/files"
+  cp -a etc usr "$pkgdir/"
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  cat > "$pkgdir/usr/share/licenses/$pkgname/LICENSE" <<'LIC'
+Hyper OS branding and UX assets.
+LIC
+}

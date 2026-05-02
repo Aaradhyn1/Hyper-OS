@@ -1,14 +1,26 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+LOCK_FILE="/run/hyperos-installer.lock"
+
+# Skip autostart if disabled
 if [[ "${1:-}" == "--auto" && -f /etc/hyperos-disable-installer-autostart ]]; then
   exit 0
 fi
 
+# Prevent duplicate instances
 if pgrep -x calamares >/dev/null 2>&1; then
   exit 0
 fi
 
+# Acquire lock (avoid race conditions)
+exec 200>"$LOCK_FILE"
+flock -n 200 || exit 0
+
+# Ensure DISPLAY is set (X session check)
+[[ -n "${DISPLAY:-}" ]] || exit 0
+
+# Run installer
 if [[ "$EUID" -eq 0 ]]; then
   exec calamares
 fi

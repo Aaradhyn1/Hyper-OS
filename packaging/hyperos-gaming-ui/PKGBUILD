@@ -1,0 +1,23 @@
+pkgname=hyperos-gaming-ui
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Hyper OS lightweight GTK (zenity) gaming control panel'
+arch=('any')
+url='https://github.com/hyper-os'
+license=('custom')
+depends=('bash' 'zenity' 'polkit')
+source=(
+  'files/usr/local/bin/hyperos-gaming-ui'
+  'files/usr/share/applications/hyperos-gaming-ui.desktop'
+)
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  cd "$srcdir/files"
+  cp -a usr "$pkgdir/"
+  chmod 0755 "$pkgdir/usr/local/bin/hyperos-gaming-ui"
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  cat > "$pkgdir/usr/share/licenses/$pkgname/LICENSE" <<'LIC'
+Hyper OS gaming UI script.
+LIC
+}
