@@ -7,7 +7,7 @@ Objective:
 ## Required services (keep enabled)
 
 These are typically required for a bootable, usable minimal Debian VM:
-
+ 
 - `systemd-journald.service` (logging)
 - `systemd-udevd.service` (device management)
 - `systemd-tmpfiles-setup.service` + `systemd-tmpfiles-setup-dev.service`

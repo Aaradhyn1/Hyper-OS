@@ -37,7 +37,7 @@ sudo reboot
 **Expected gains (typical):**
 - 1-6 seconds faster boot on minimal systems with disabled optional hardware/services
 
-### 3) service optimization
+### 3) service optimization 
 Disables/masks non-essential periodic/background units (apt timers, man-db timer, ModemManager, Avahi, CUPS, etc.) when present.
 
 **Expected gains (typical):**

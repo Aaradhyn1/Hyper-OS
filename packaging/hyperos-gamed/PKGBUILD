@@ -1,0 +1,25 @@
+pkgname=hyperos-gamed
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Hyper OS gaming profile daemon and wrapper launcher'
+arch=('any')
+url='https://github.com/hyper-os'
+license=('custom')
+depends=('bash' 'gamemode' 'cpupower' 'systemd')
+optdepends=('irqbalance: improved interrupt balancing under load')
+source=(
+  'files/usr/local/bin/hyperos-gamed'
+  'files/usr/local/bin/hyperos-game-wrapper'
+  'files/etc/systemd/system/hyperos-gamed.service'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+package() {
+  cd "$srcdir/files"
+  cp -a usr etc "$pkgdir/"
+  chmod 0755 "$pkgdir/usr/local/bin/hyperos-gamed" "$pkgdir/usr/local/bin/hyperos-game-wrapper"
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  cat > "$pkgdir/usr/share/licenses/$pkgname/LICENSE" <<'LIC'
+Hyper OS gaming daemon and wrapper scripts.
+LIC
+}
