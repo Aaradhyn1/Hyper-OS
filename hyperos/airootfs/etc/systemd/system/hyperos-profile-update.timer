@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Hyper OS cloud profile updater daily
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=24h
+Persistent=true
+Unit=hyperos-profile-update.service
+
+[Install]
+WantedBy=timers.target

@@ -12,11 +12,16 @@ Presentation {
 
     Slide {
         title: qsTr("Welcome to Hyper OS")
-        text: qsTr("Use Calamares to install Hyper OS to disk with BIOS or UEFI boot support.")
+        text: qsTr("Speed, Focus, Victory. Install Hyper OS with BIOS and UEFI support in a minimal flow.")
     }
 
     Slide {
-        title: qsTr("Fast Live to Installed Transition")
-        text: qsTr("The installer copies the live SquashFS system, configures GRUB, and prepares a standalone installation.")
+        title: qsTr("Gaming-Ready by Default")
+        text: qsTr("Hyper OS includes Steam, Lutris, Wine-Staging, GameMode, and profile-based optimizations out of the box.")
+    }
+
+    Slide {
+        title: qsTr("Minimal, Fast, Cohesive")
+        text: qsTr("From boot to desktop, Hyper OS uses a consistent low-overhead design focused on clarity and performance.")
     }
 }

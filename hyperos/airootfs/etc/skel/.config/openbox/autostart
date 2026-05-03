@@ -1,4 +1,4 @@
-# Hyper OS system-wide Openbox autostart
+# Hyper OS minimal session startup
 nitrogen --set-zoom-fill --save /usr/share/hyperos-branding/wallpapers/hyperos-default.svg &
 tint2 &
 nm-applet &

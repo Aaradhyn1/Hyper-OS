@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=HyperOS Gaming UI
+Comment=Control HyperOS game optimization profiles
+Exec=hyperos-gaming-ui
+Icon=applications-games
+Terminal=false
+Categories=Game;System;
