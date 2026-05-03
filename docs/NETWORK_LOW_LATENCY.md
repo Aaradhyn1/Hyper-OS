@@ -25,12 +25,12 @@ The file `configs/networking/sysctl-low-latency.conf` applies:
 The file `configs/networking/resolved.conf` configures `systemd-resolved` with:
 - low-latency public DNS endpoints
 - cache enabled
-- opportunistic DNS-over-TLS
+- opportunistic DNS-over-TL
 - stub listener for local fast resolver path
 
 ## 3) Buffer tuning rationale
 
-- Moderate defaults avoid excessive memory use on small systems.
+- Moderate defaults avoid excessive memory use on small syste ms.
 - Higher max buffers allow bursts without drops.
 - Balanced values reduce jitter from retransmit/backlog pressure.
 

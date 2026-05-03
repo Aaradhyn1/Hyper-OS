@@ -1,75 +1,64 @@
 #!/usr/bin/env bash
-# Advanced Hyper OS Performance Provisioner
 set -Eeuo pipefail
-trap 'echo "Error on line $LINENO. Script failed."' ERR
 
-# Configuration
-CONFIG_SRC="./configs/performance"
-TARGET_DIR="/etc"
-LOG_TAG="[HyperOS-Perf]"
+trap 'echo "[hyperos-perf] failed at line $LINENO" >&2' ERR
 
-# Utility for standardized logging
-log() {
-  printf '%s %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$LOG_TAG" "$1"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CFG_DIR="$ROOT_DIR/configs/performance"
+DRY_RUN="${DRY_RUN:-0}"
+
+log() { printf '[hyperos-perf] %s\n' "$*"; }
+
+run() {
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log "[dry-run] $*"
+  else
+    "$@"
+  fi
 }
 
-# 1. Pre-flight Checks
-if [[ "$EUID" -ne 0 ]]; then 
-  log "ERROR: Must run as root. Try: sudo $0" >&2
-  exit 1
-fi
+require_root() {
+  [[ $EUID -eq 0 ]] || { echo "run as root" >&2; exit 1; }
+}
 
-# Ensure source configs exist before proceeding
-for cfg in sysctl.conf systemd.conf journald.conf; do
-  [[ -f "$CONFIG_SRC/$cfg" ]] || { log "FATAL: $cfg missing in $CONFIG_SRC"; exit 1; }
-done
+install_cfg() {
+  local src=$1 dst=$2
+  run install -D -m 0644 "$src" "$dst"
+}
 
-# 2. Kernel & Systemd Hardening/Tuning
-log "Applying kernel sysctl parameters..."
-install -D -m 0644 "$CONFIG_SRC/sysctl.conf" "$TARGET_DIR/sysctl.d/99-hyperos-performance.conf"
-# Apply without full system reload to avoid interrupting active network stacks unnecessarily
-sysctl -p "$TARGET_DIR/sysctl.d/99-hyperos-performance.conf" >/dev/null
-
-log "Configuring systemd manager & journald..."
-install -D -m 0644 "$CONFIG_SRC/systemd.conf" "$TARGET_DIR/systemd/system.conf.d/10-hyperos-performance.conf"
-install -D -m 0644 "$CONFIG_SRC/journald.conf" "$TARGET_DIR/systemd/journald.conf.d/10-hyperos-journal.conf"
-
-# 3. Dynamic Service Optimization
-# Added: udisks2 (heavy polling), fwupd (background scanning), and packagekit
-SERVICES_TO_STRIP=(
-  apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer
-  man-db.timer e2scrub_all.timer motd-news.timer bluetooth.service 
-  ModemManager.service avahi-daemon.service cups.service 
-  udisks2.service fwupd.service packagekit.service
-)
-
-log "Pruning non-essential background units..."
-for unit in "${SERVICES_TO_STRIP[@]}"; do
-  if systemctl is-enabled "$unit" >/dev/null 2>&1; then
-    systemctl disable --now "$unit" || true
-    systemctl mask "$unit" || true
-    log "  - Masked $unit"
+disable_if_exists() {
+  local unit=$1
+  if systemctl list-unit-files "$unit" >/dev/null 2>&1; then
+    run systemctl disable --now "$unit"
   fi
-done
+}
 
-# 4. Advanced: I/O Scheduler & CPU Governor Tuning
-log "Optimizing Hardware Governors..."
-# Set CPU to performance if available
-if [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
-    echo "performance" | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null || true
-fi
+main() {
+  require_root
 
-# Set I/O scheduler to 'none' (for NVMe) or 'mq-deadline' (for SSD)
-for dev in /sys/block/sd* /sys/block/nvme*; do
-    [ -e "$dev/queue/scheduler" ] || continue
-    # If it's an NVMe, 'none' is usually best to bypass overhead
-    [[ "$dev" == *"nvme"* ]] && echo "none" > "$dev/queue/scheduler" || echo "mq-deadline" > "$dev/queue/scheduler"
-done
+  install_cfg "$CFG_DIR/sysctl.conf" /etc/sysctl.d/99-hyperos-performance.conf
+  install_cfg "$CFG_DIR/systemd.conf" /etc/systemd/system.conf.d/10-hyperos-performance.conf
+  install_cfg "$CFG_DIR/journald.conf" /etc/systemd/journald.conf.d/10-hyperos-performance.conf
+  install_cfg "$CFG_DIR/cpupower.conf" /etc/default/cpupower
+  install_cfg "$CFG_DIR/zram-generator.conf" /etc/systemd/zram-generator.conf
+  install_cfg "$CFG_DIR/udev-iosched.rules" /etc/udev/rules.d/60-hyperos-iosched.rules
 
-# 5. Finalize
-log "Reloading control groups and daemon state..."
-systemctl daemon-reload
-systemctl restart systemd-journald
+  run sysctl --system
+  run systemctl daemon-reload
+  run systemctl restart systemd-journald
+  run udevadm control --reload
+  run udevadm trigger --subsystem-match=block --action=change
 
-log "Optimization complete. System latency minimized."
-log "RECOMMENDED: Reboot to clear fragmented memory and apply systemd-manager limits."
+  # Safe default removals for desktop ISO installs
+  disable_if_exists ModemManager.service
+  disable_if_exists bluetooth.service
+
+  if systemctl list-unit-files cpupower.service >/dev/null 2>&1; then
+    run systemctl enable --now cpupower.service
+  fi
+
+  log "performance profile applied"
+  log "set DRY_RUN=1 to preview; remove files in /etc/{sysctl.d,systemd,journald.conf.d,udev/rules.d} to revert"
+}
+
+main "$@"

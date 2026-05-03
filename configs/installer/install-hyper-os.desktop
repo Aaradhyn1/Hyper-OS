@@ -2,9 +2,15 @@
 Type=Application
 Version=1.0
 Name=Install Hyper OS
+GenericName=System Installer
 Comment=Install Hyper OS to disk
+
 Exec=/usr/local/bin/hyperos-installer
+TryExec=/usr/local/bin/hyperos-installer
+
 Icon=calamares
 Terminal=false
-Categories=System;Settings;
+Categories=System;Settings;Utility;
+
 StartupNotify=true
+NoDisplay=false

@@ -1,1 +1,4 @@
 %wheel ALL=(ALL:ALL) ALL
+Defaults:%wheel secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Defaults:%wheel use_pty
+Defaults:%wheel logfile="/var/log/sudo.log"

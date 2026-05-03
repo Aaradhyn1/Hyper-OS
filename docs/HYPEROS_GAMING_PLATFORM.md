@@ -34,11 +34,6 @@ Each profile is shell-style key/value config and may include:
 - `NICE_LEVEL` (e.g. `-4`)
 - `NVIDIA_OFFLOAD` (`0|1`)
 - `IRQBALANCE_ONESHOT` (`0|1`)
-- `PROTON_VERSION` (label for required runner target)
-- `DXVK_HUD`, `DXVK_ASYNC`
-- `VKD3D_CONFIG`
-- `WINE_ESYNC`, `WINE_FSYNC`
-- `MANGOHUD`
 
 ## C. Kernel & Scheduler Tuning
 
@@ -79,7 +74,6 @@ hyperos-game-launch --profile lutris-default --
 systemctl status hyperos-gamed.service
 journalctl -u hyperos-gamed.service -f
 pgrep -fa steam_app_
-hyperos-game-validate
 ```
 
 Simulate launch:

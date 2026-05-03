@@ -1,0 +1,26 @@
+pkgname=hyperos-openbox-config
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Hyper OS Openbox session defaults'
+arch=('any')
+url='https://github.com/hyper-os'
+license=('custom')
+depends=('openbox' 'pcmanfm' 'network-manager-applet' 'polkit-gnome')
+backup=(
+  'etc/xdg/openbox/autostart'
+  'etc/xdg/openbox/rc.xml'
+)
+source=(
+  'files/etc/xdg/openbox/autostart'
+  'files/etc/xdg/openbox/rc.xml'
+)
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  cd "$srcdir/files"
+  cp -a etc "$pkgdir/"
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  cat > "$pkgdir/usr/share/licenses/$pkgname/LICENSE" <<'LIC'
+Hyper OS Openbox defaults.
+LIC
+}

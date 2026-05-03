@@ -2,7 +2,6 @@
 set -Eeuo pipefail
 
 PROFILE_DIR="${PROFILE_DIR:-/etc/hyperos/game-profiles}"
-CLOUD_PROFILE_DIR="${CLOUD_PROFILE_DIR:-/var/lib/hyperos/profiles}"
 
 usage() {
   cat <<USAGE
@@ -42,33 +41,11 @@ done
 [[ $# -gt 0 ]] || { echo "Game command is required" >&2; exit 2; }
 
 profile_file="$PROFILE_DIR/$profile_name.conf"
-cloud_profile_file="$CLOUD_PROFILE_DIR/$profile_name.json"
-if [[ ! -f "$profile_file" ]]; then
-  echo "Profile not found: $profile_file (falling back to raw launch)" >&2
-  exec "$@"
-fi
+[[ -f "$profile_file" ]] || { echo "Profile not found: $profile_file" >&2; exit 1; }
 
-unset PROFILE_NAME PROCESS_MATCH CPU_GOVERNOR IO_SCHEDULER ENV_VARS NICE_LEVEL ENABLE_GAMEMODE NVIDIA_OFFLOAD PROTON_VERSION DXVK_HUD DXVK_ASYNC VKD3D_CONFIG WINE_ESYNC WINE_FSYNC MANGOHUD
+unset PROFILE_NAME PROCESS_MATCH CPU_GOVERNOR IO_SCHEDULER ENV_VARS NICE_LEVEL ENABLE_GAMEMODE NVIDIA_OFFLOAD
 # shellcheck source=/dev/null
 source "$profile_file"
-
-if [[ -f "$cloud_profile_file" ]] && command -v jq >/dev/null 2>&1; then
-  if jq -e '.version and .game_name and .launcher' "$cloud_profile_file" >/dev/null 2>&1; then
-    PROTON_VERSION="$(jq -r '.proton_version // empty' "$cloud_profile_file")"
-    ENABLE_GAMEMODE="$(jq -r '.gamemode // false' "$cloud_profile_file" | sed 's/true/1/;s/false/0/')"
-    DXVK_HUD="$(jq -r '.dxvk_config.DXVK_HUD // empty' "$cloud_profile_file")"
-    DXVK_ASYNC="$(jq -r '.dxvk_config.DXVK_ASYNC // empty' "$cloud_profile_file")"
-    VKD3D_CONFIG="$(jq -r '.vkd3d_config.VKD3D_CONFIG // empty' "$cloud_profile_file")"
-    WINE_ESYNC="$(jq -r '.environment_variables.WINEESYNC // empty' "$cloud_profile_file")"
-    WINE_FSYNC="$(jq -r '.environment_variables.WINEFSYNC // empty' "$cloud_profile_file")"
-    MANGOHUD="$(jq -r '.environment_variables.MANGOHUD // empty' "$cloud_profile_file")"
-    while IFS='=' read -r key value; do
-      [[ -n "$key" ]] && export "$key=$value"
-    done < <(jq -r '.environment_variables // {} | to_entries[] | "\(.key)=\(.value)"' "$cloud_profile_file")
-  else
-    echo "Invalid cloud profile JSON: $cloud_profile_file (using local profile)" >&2
-  fi
-fi
 
 if [[ -n "${ENV_VARS:-}" ]]; then
   # shellcheck disable=SC2206
@@ -83,14 +60,6 @@ if [[ "${NVIDIA_OFFLOAD:-0}" == "1" ]]; then
   export __GLX_VENDOR_LIBRARY_NAME=nvidia
   export __VK_LAYER_NV_optimus=NVIDIA_only
 fi
-
-[[ -n "${PROTON_VERSION:-}" ]] && export HYPEROS_PROTON_VERSION="$PROTON_VERSION"
-[[ -n "${DXVK_HUD:-}" ]] && export DXVK_HUD="$DXVK_HUD"
-[[ -n "${DXVK_ASYNC:-}" ]] && export DXVK_ASYNC="$DXVK_ASYNC"
-[[ -n "${VKD3D_CONFIG:-}" ]] && export VKD3D_CONFIG="$VKD3D_CONFIG"
-[[ -n "${WINE_ESYNC:-}" ]] && export WINEESYNC="$WINE_ESYNC"
-[[ -n "${WINE_FSYNC:-}" ]] && export WINEFSYNC="$WINE_FSYNC"
-[[ -n "${MANGOHUD:-}" ]] && export MANGOHUD="$MANGOHUD"
 
 if [[ -n "${NICE_LEVEL:-}" ]]; then
   renice -n "$NICE_LEVEL" $$ >/dev/null 2>&1 || true

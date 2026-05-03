@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
+  <rect width="1920" height="1080" fill="#0B0F14"/>
+  <g stroke="#1A2330" stroke-width="1" opacity="0.8">
+    <path d="M0 120h1920M0 240h1920M0 360h1920M0 480h1920M0 600h1920M0 720h1920M0 840h1920M0 960h1920"/>
+    <path d="M120 0v1080M240 0v1080M360 0v1080M480 0v1080M600 0v1080M720 0v1080M840 0v1080M960 0v1080M1080 0v1080M1200 0v1080M1320 0v1080M1440 0v1080M1560 0v1080M1680 0v1080M1800 0v1080"/>
+  </g>
+  <text x="80" y="980" fill="#29D3FF" font-family="DejaVu Sans" font-size="64">Hyper OS</text>
+  <text x="80" y="1030" fill="#9BB0C8" font-family="DejaVu Sans" font-size="28">Fast. Focused. Game Ready.</text>
+</svg>
