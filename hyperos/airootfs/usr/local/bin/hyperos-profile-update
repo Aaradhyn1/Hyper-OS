@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+CONFIG_FILE="/etc/hyperos/cloud-profiles.conf"
+CACHE_DIR="/var/lib/hyperos/profiles"
+TMP_DIR="${TMPDIR:-/tmp}/hyperos-profile-update"
+
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+PROFILE_FEED_URL="${PROFILE_FEED_URL:-https://raw.githubusercontent.com/hyper-os/game-profiles/main/profiles}"
+PROFILE_INDEX="${PROFILE_INDEX:-index.json}"
+
+log() {
+  logger -t hyperos-profile-update -- "$*"
+  printf '[hyperos-profile-update] %s\n' "$*"
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || { log "Missing required command: $1"; exit 1; }
+}
+
+main() {
+  require_cmd curl
+  require_cmd jq
+  install -d -m 0755 "$CACHE_DIR" "$TMP_DIR"
+
+  local index_url index_tmp
+  index_url="$PROFILE_FEED_URL/$PROFILE_INDEX"
+  index_tmp="$TMP_DIR/$PROFILE_INDEX"
+
+  if ! curl -fsSL "$index_url" -o "$index_tmp"; then
+    log "Remote index unavailable; keeping local cached profiles"
+    exit 0
+  fi
+
+  jq -e '.version and .profiles and (.profiles | type == "array")' "$index_tmp" >/dev/null
+
+  while IFS= read -r profile_file; do
+    local remote local_tmp local_path
+    remote="$PROFILE_FEED_URL/$profile_file"
+    local_tmp="$TMP_DIR/$profile_file"
+    local_path="$CACHE_DIR/$profile_file"
+
+    if curl -fsSL "$remote" -o "$local_tmp"; then
+      if jq -e '.version and .game_name and .launcher' "$local_tmp" >/dev/null 2>&1; then
+        mv "$local_tmp" "$local_path"
+        log "Updated profile: $profile_file"
+      else
+        log "Rejected invalid profile JSON: $profile_file"
+      fi
+    else
+      log "Skipped unreachable profile: $profile_file"
+    fi
+  done < <(jq -r '.profiles[]' "$index_tmp")
+
+  cp "$index_tmp" "$CACHE_DIR/index.json"
+  rm -rf "$TMP_DIR"
+  log "Profile update complete"
+}
+
+main "$@"

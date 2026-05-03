@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+PROFILE_DIR = "/etc/hyperos/game-profiles"
+SERVICE = "hyperos-gamed.service"
+
+
+def run_cmd(cmd):
+    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def service_active():
+    return run_cmd(["systemctl", "is-active", SERVICE]).stdout.strip() == "active"
+
+
+def set_service(enable):
+    cmd = ["pkexec", "systemctl", "enable", "--now", SERVICE] if enable else ["pkexec", "systemctl", "disable", "--now", SERVICE]
+    result = run_cmd(cmd)
+    if result.returncode != 0:
+        messagebox.showerror("Hyper OS Gaming UI", result.stderr.strip() or "Failed to update service state")
+
+
+def current_metrics():
+    load = os.getloadavg()[0]
+    mem_total = 0
+    mem_available = 0
+    with open("/proc/meminfo", "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("MemTotal:"):
+                mem_total = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                mem_available = int(line.split()[1])
+    used = mem_total - mem_available
+    return f"CPU Load(1m): {load:.2f} | RAM Used: {used // 1024} MB / {mem_total // 1024} MB"
+
+
+def list_profiles():
+    if not os.path.isdir(PROFILE_DIR):
+        return []
+    return sorted([p[:-5] for p in os.listdir(PROFILE_DIR) if p.endswith('.conf')])
+
+
+def save_selected_profile(profile):
+    result = run_cmd(["pkexec", "ln", "-snf", f"{PROFILE_DIR}/{profile}.conf", "/etc/hyperos/game-profiles/active.conf"])
+    if result.returncode != 0:
+        messagebox.showerror("Hyper OS Gaming UI", result.stderr.strip() or "Failed to select profile")
+
+
+def refresh_status(status_label, toggle_var):
+    toggle_var.set(service_active())
+    status_label.config(text=current_metrics())
+    status_label.after(2000, lambda: refresh_status(status_label, toggle_var))
+
+
+def main():
+    root = tk.Tk()
+    root.title("HyperOS Gaming UI")
+    root.geometry("560x260")
+
+    frm = ttk.Frame(root, padding=12)
+    frm.pack(fill=tk.BOTH, expand=True)
+
+    toggle_var = tk.BooleanVar(value=service_active())
+
+    ttk.Label(frm, text="Gaming Daemon", font=("Sans", 11, "bold")).grid(row=0, column=0, sticky="w")
+    ttk.Checkbutton(
+        frm,
+        text="Enable HyperOS Game Mode",
+        variable=toggle_var,
+        command=lambda: set_service(toggle_var.get()),
+    ).grid(row=1, column=0, sticky="w", pady=(4, 12))
+
+    ttk.Label(frm, text="Default Profile", font=("Sans", 11, "bold")).grid(row=2, column=0, sticky="w")
+    profiles = list_profiles()
+    selected = tk.StringVar(value=profiles[0] if profiles else "")
+    profile_box = ttk.Combobox(frm, textvariable=selected, values=profiles, state="readonly", width=40)
+    profile_box.grid(row=3, column=0, sticky="w", pady=(4, 6))
+    ttk.Button(frm, text="Apply Selection", command=lambda: save_selected_profile(selected.get())).grid(row=4, column=0, sticky="w")
+
+    status_label = ttk.Label(frm, text="", foreground="#2b6cb0")
+    status_label.grid(row=5, column=0, sticky="w", pady=(14, 0))
+    refresh_status(status_label, toggle_var)
+
+    notes = (
+        "Steam Launch Option: hyperos-game-launch --profile steam-default -- %command%\n"
+        "Lutris Command Prefix: hyperos-game-launch --profile lutris-default --"
+    )
+    ttk.Label(frm, text=notes, foreground="#555").grid(row=6, column=0, sticky="w", pady=(12, 0))
+
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
