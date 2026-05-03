@@ -34,7 +34,6 @@ Each profile is shell-style key/value config and may include:
 - `NICE_LEVEL` (e.g. `-4`)
 - `NVIDIA_OFFLOAD` (`0|1`)
 - `IRQBALANCE_ONESHOT` (`0|1`)
-
 ## C. Kernel & Scheduler Tuning
 
 Default gaming sysctl file:
