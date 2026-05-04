@@ -1,0 +1,17 @@
+[Unit]
+Description=Hyper OS first boot validation report
+After=network-online.target graphical.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/hyperos/firstboot-validation.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/hyperos-check.sh
+ExecStartPost=/usr/bin/install -d /var/lib/hyperos
+ExecStartPost=/usr/bin/touch /var/lib/hyperos/firstboot-validation.done
+RemainAfterExit=yes
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

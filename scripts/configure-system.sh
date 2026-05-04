@@ -37,6 +37,17 @@ main() {
 
   chroot "$ROOTFS_DIR" /usr/bin/env bash -eux <<CHROOT
     export DEBIAN_FRONTEND=noninteractive
+    : "\${USERNAME:=hyper}"
+
+    enable_unit() {
+      local unit="\$1"
+      local wants_dir="/etc/systemd/system/multi-user.target.wants"
+      local unit_path="/etc/systemd/system/\$unit"
+      [[ -f "\$unit_path" ]] || unit_path="/lib/systemd/system/\$unit"
+      mkdir -p "\$wants_dir"
+      [[ -f "\$unit_path" ]] || { echo "Missing unit file: \$unit" >&2; exit 1; }
+      ln -snf "\$unit_path" "\$wants_dir/\$unit"
+    }
     
     # 1. Advanced Package Selection & Performance
     apt-get update
@@ -53,7 +64,7 @@ ALGO=zstd
 PERCENT=25
 PRIORITY=100
 EOF
-    systemctl enable zramswap
+    enable_unit zramswap.service
 
     # 3. PipeWire Low-Latency Tuning
     # Sets quantum limits for professional audio responsiveness
@@ -72,13 +83,23 @@ EOF
     ufw default deny incoming
     ufw default allow outgoing
     ufw allow ssh
-    systemctl enable apparmor
+    enable_unit apparmor.service
 
     # 5. Robust User & Autologin Logic
-    if ! id -u "$USERNAME" >/dev/null 2>&1; then
-      useradd -m -s /bin/bash "$USERNAME"
-      echo "$USERNAME:$USER_PASSWORD" | chpasswd
-      usermod -aG sudo,audio,video,render "$USERNAME"
+    if ! id -u "\$USERNAME" >/dev/null 2>&1; then
+      useradd -m -s /bin/bash "\$USERNAME"
+      if [[ -n "\${USER_PASSWORD_HASH:-}" ]]; then
+        usermod -p "\$USER_PASSWORD_HASH" "\$USERNAME"
+      else
+        passwd -l "\$USERNAME"
+      fi
+      usermod -aG sudo,audio,video,render "\$USERNAME"
+    fi
+
+    if [[ -n "\${ROOT_PASSWORD_HASH:-}" ]]; then
+      usermod -p "\$ROOT_PASSWORD_HASH" root
+    else
+      passwd -l root
     fi
 
     # 6. Advanced X11/Openbox Polish
@@ -144,7 +165,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl enable check-live-persistence.service
+    enable_unit check-live-persistence.service
 
     # 8. Final Cleanup (Reduce SquashFS Size)
     apt-get autoremove -y
