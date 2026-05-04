@@ -1,16 +1,20 @@
 ---
 componentName: hyperos
+
 welcomeStyleCalamares: true
 welcomeExpandingLogo: false
 windowExpanding: false
 windowSize: 900px,520px
-sidebarBackground: "#1b1e24"
-sidebarText: "#f5f7fa"
-sidebarTextSelect: "#6ec1ff"
+
+sidebarBackground: "#121A24"
+sidebarText: "#E6EDF7"
+sidebarTextSelect: "#29D3FF"
+
 style:
-  sidebarBackground: "#1b1e24"
-  sidebarText: "#f5f7fa"
-  sidebarTextSelect: "#6ec1ff"
+  sidebarBackground: "#121A24"
+  sidebarText: "#E6EDF7"
+  sidebarTextSelect: "#29D3FF"
+
 strings:
   productName: "Hyper OS"
   shortProductName: "Hyper OS"
@@ -19,3 +23,4 @@ strings:
   versionedName: "Hyper OS rolling"
   shortVersionedName: "Hyper OS rolling"
   bootloaderEntryName: "Hyper OS"
+  slogan: "Fast. Focused. Game Ready."

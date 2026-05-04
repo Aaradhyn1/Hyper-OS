@@ -1,0 +1,19 @@
+# Hyper OS Openbox autostart
+
+if command -v dbus-launch >/dev/null 2>&1 && [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+  eval "$(dbus-launch --sh-syntax --exit-with-session)"
+fi
+
+xsetroot -solid "#0B0F14"
+
+command -v tint2 >/dev/null 2>&1 && tint2 &
+command -v nm-applet >/dev/null 2>&1 && nm-applet &
+
+if [ -x /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 ]; then
+  /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
+fi
+
+command -v pcmanfm >/dev/null 2>&1 && pcmanfm --desktop --profile LXDE &
+
+xset -dpms
+xset s off

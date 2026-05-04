@@ -1,0 +1,8 @@
+# Hyper OS Openbox defaults
+command -v nm-applet >/dev/null 2>&1 && nm-applet &
+if [ -x /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 ]; then
+  /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
+fi
+command -v pcmanfm >/dev/null 2>&1 && pcmanfm --desktop --profile LXDE &
+xset -dpms
+xset s off
