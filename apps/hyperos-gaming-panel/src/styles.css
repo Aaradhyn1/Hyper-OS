@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: Inter, "DejaVu Sans", sans-serif;
+  background: radial-gradient(circle at top right, rgba(143,93,255,.12), transparent 35%),
+              radial-gradient(circle at top left, rgba(57,213,255,.08), transparent 35%),
+              #0b0f14;
+}
+
+.glow-hover {
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.glow-hover:hover {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 0 22px rgba(57, 213, 255, 0.2);
+}

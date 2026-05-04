@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0F1117"/>
+      <stop offset="100%" stop-color="#1B1E24"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#g)"/>
+  <circle cx="1540" cy="220" r="220" fill="#8B5CF6" fill-opacity="0.15"/>
+  <circle cx="320" cy="820" r="260" fill="#6EC1FF" fill-opacity="0.12"/>
+  <text x="120" y="180" fill="#F5F7FA" font-size="88" font-family="DejaVu Sans, sans-serif" font-weight="700">Hyper OS</text>
+  <text x="124" y="235" fill="#A6ADBB" font-size="32" font-family="DejaVu Sans, sans-serif">Speed, Focus, Victory</text>
+</svg>

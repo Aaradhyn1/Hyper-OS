@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+PROFILE_DIR="${PROFILE_DIR:-/etc/hyperos/game-profiles}"
+STATE_DIR="/run/hyperos-gamed"
+ACTIVE_PROFILE_FILE="$STATE_DIR/active-profile"
+CPU_SNAPSHOT="$STATE_DIR/cpu-governor.before"
+IO_SNAPSHOT="$STATE_DIR/io-scheduler.before"
+POLL_SECS="${POLL_SECS:-2}"
+
+log() {
+  logger -t hyperos-gamed -- "$*"
+  printf '[hyperos-gamed] %s\n' "$*"
+}
+
+snapshot_cpu_governor() {
+  : >"$CPU_SNAPSHOT"
+  while IFS= read -r gov_file; do
+    printf '%s=%s\n' "$gov_file" "$(<"$gov_file")" >>"$CPU_SNAPSHOT"
+  done < <(find /sys/devices/system/cpu -path '*/cpufreq/scaling_governor' -type f 2>/dev/null | sort)
+}
+
+apply_cpu_governor() {
+  local governor="$1"
+  while IFS= read -r gov_file; do
+    [[ -w "$gov_file" ]] && echo "$governor" >"$gov_file" || true
+  done < <(find /sys/devices/system/cpu -path '*/cpufreq/scaling_governor' -type f 2>/dev/null)
+}
+
+restore_cpu_governor() {
+  [[ -f "$CPU_SNAPSHOT" ]] || return 0
+  while IFS='=' read -r gov_file governor; do
+    [[ -w "$gov_file" ]] && echo "$governor" >"$gov_file" || true
+  done <"$CPU_SNAPSHOT"
+}
+
+snapshot_io_scheduler() {
+  : >"$IO_SNAPSHOT"
+  while IFS= read -r sched_file; do
+    local active
+    active="$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$sched_file")"
+    printf '%s=%s\n' "$sched_file" "$active" >>"$IO_SNAPSHOT"
+  done < <(find /sys/block -path '*/queue/scheduler' -type f 2>/dev/null | sort)
+}
+
+apply_io_scheduler() {
+  local scheduler="$1"
+  while IFS= read -r sched_file; do
+    if [[ -w "$sched_file" ]] && grep -qw "$scheduler" "$sched_file"; then
+      echo "$scheduler" >"$sched_file"
+    fi
+  done < <(find /sys/block -path '*/queue/scheduler' -type f 2>/dev/null)
+}
+
+restore_io_scheduler() {
+  [[ -f "$IO_SNAPSHOT" ]] || return 0
+  while IFS='=' read -r sched_file scheduler; do
+    [[ -w "$sched_file" ]] && echo "$scheduler" >"$sched_file" || true
+  done <"$IO_SNAPSHOT"
+}
+
+select_profile() {
+  local best_profile=""
+  local profile
+
+  for profile in "$PROFILE_DIR"/*.conf; do
+    [[ -f "$profile" ]] || continue
+    unset PROFILE_NAME PROCESS_MATCH CPU_GOVERNOR IO_SCHEDULER
+    # shellcheck source=/dev/null
+    source "$profile"
+    [[ -n "${PROCESS_MATCH:-}" ]] || continue
+
+    if pgrep -f -- "$PROCESS_MATCH" >/dev/null 2>&1; then
+      best_profile="$profile"
+      break
+    fi
+  done
+
+  printf '%s' "$best_profile"
+}
+
+apply_profile() {
+  local profile_path="$1"
+  unset PROFILE_NAME PROCESS_MATCH CPU_GOVERNOR IO_SCHEDULER
+  # shellcheck source=/dev/null
+  source "$profile_path"
+
+  mkdir -p "$STATE_DIR"
+  [[ -f "$CPU_SNAPSHOT" ]] || snapshot_cpu_governor
+  [[ -f "$IO_SNAPSHOT" ]] || snapshot_io_scheduler
+
+  [[ -n "${CPU_GOVERNOR:-}" ]] && apply_cpu_governor "$CPU_GOVERNOR"
+  [[ -n "${IO_SCHEDULER:-}" ]] && apply_io_scheduler "$IO_SCHEDULER"
+
+  if [[ "${IRQBALANCE_ONESHOT:-0}" == "1" ]] && command -v systemctl >/dev/null 2>&1; then
+    systemctl try-restart irqbalance.service || true
+  fi
+
+  printf '%s\n' "$profile_path" >"$ACTIVE_PROFILE_FILE"
+  log "Applied profile: ${PROFILE_NAME:-$(basename "$profile_path")}" 
+}
+
+restore_defaults() {
+  restore_cpu_governor
+  restore_io_scheduler
+  rm -f "$ACTIVE_PROFILE_FILE" "$CPU_SNAPSHOT" "$IO_SNAPSHOT"
+  log "Restored system defaults"
+}
+
+main() {
+  mkdir -p "$STATE_DIR"
+  log "Starting daemon. Monitoring profiles in $PROFILE_DIR"
+
+  while true; do
+    local selected_profile active_profile
+    selected_profile="$(select_profile)"
+    active_profile="$(<"$ACTIVE_PROFILE_FILE" 2>/dev/null || true)"
+
+    if [[ -n "$selected_profile" && "$selected_profile" != "$active_profile" ]]; then
+      apply_profile "$selected_profile"
+    elif [[ -z "$selected_profile" && -n "$active_profile" ]]; then
+      restore_defaults
+    fi
+
+    sleep "$POLL_SECS"
+  done
+}
+
+main "$@"

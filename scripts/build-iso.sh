@@ -29,13 +29,18 @@ terminal_output serial console
 menuentry "Hyper OS (Live Performance Mode)" {
   linux /live/vmlinuz boot=live components quiet splash noeject toram \
         elevator=noop intel_idle.max_cstate=1 processor.max_cstate=1 \
-        mitigations=off fsck.mode=force fsck.repair=yes
+        fsck.repair=yes
   initrd /live/initrd.img
 }
 
 menuentry "Hyper OS (Persistence Mode)" {
   linux /live/vmlinuz boot=live components persistence persistence-label=HYPER_PERSIST \
         quiet splash noeject
+  initrd /live/initrd.img
+}
+
+menuentry "Hyper OS (Persistence Fallback: read-only live session)" {
+  linux /live/vmlinuz boot=live components nopersistence quiet splash noeject
   initrd /live/initrd.img
 }
 
@@ -64,6 +69,21 @@ validate_initramfs_persistence_support() {
   if ! lsinitramfs "$initrd_path" | grep -Eq '^scripts/live|/live-boot/'; then
     die "initrd is missing live-boot persistence hooks. Ensure live-boot is installed in rootfs and initramfs is regenerated."
   fi
+}
+
+validate_iso_boot_artifacts() {
+  local iso_path="$1"
+  log INFO "Validating ISO UEFI/BIOS boot artifacts"
+
+  xorriso -indev "$iso_path" -find /EFI/BOOT/BOOTX64.EFI -print -quit | grep -q '/EFI/BOOT/BOOTX64.EFI' \
+    || die "Missing UEFI fallback loader: /EFI/BOOT/BOOTX64.EFI"
+
+  local eltorito_report
+  eltorito_report="$(xorriso -indev "$iso_path" -report_el_torito plain 2>/dev/null || true)"
+  grep -qi 'platform id[[:space:]]*:[[:space:]]*0x00' <<<"$eltorito_report" \
+    || die "Missing El Torito BIOS boot image (platform 0x00)"
+  grep -qi 'platform id[[:space:]]*:[[:space:]]*0xef' <<<"$eltorito_report" \
+    || die "Missing El Torito EFI boot image (platform 0xEF)"
 }
 
 # --- Intelligent SquashFS Sorting ---
@@ -108,7 +128,7 @@ main() {
 
   # --- Advanced RootFS Sanitization ---
   log INFO "Sanitizing RootFS (Machine IDs, Logs, Temp)"
-  truncate -s 0 "$ROOTFS_DIR/etc/machine-id" || true
+  [[ -f "$ROOTFS_DIR/etc/machine-id" ]] && truncate -s 0 "$ROOTFS_DIR/etc/machine-id"
   rm -f "$ROOTFS_DIR/var/lib/dbus/machine-id"
   find "$ROOTFS_DIR/var/log" -type f -delete
   find "$ROOTFS_DIR/root/" -mindepth 1 -delete
@@ -139,6 +159,8 @@ main() {
     -- -volid "HYPER_OS_$(date +%Y%m%d)" \
     -preparer "HyperOS-Builder" \
     -publisher "YourName"
+
+  validate_iso_boot_artifacts "$ISO_PATH"
 
   log INFO "Build Successful: $ISO_PATH"
 }
