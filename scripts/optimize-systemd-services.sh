@@ -1,90 +1,76 @@
 #!/usr/bin/env bash
-# Hyper OS Systemd Performance Profiler & Optimizer
 set -Eeuo pipefail
 
-DRY_RUN="${DRY_RUN:-0}"
-LOG_TAG="[Systemd-Pro]"
+DRY_RUN="${DRY_RUN:-1}"
+MODE="${1:-apply}"
+STATE_DIR="/var/lib/hyperos"
+STATE_FILE="$STATE_DIR/disabled-services.list"
 
-# Define "Protected" units that the script will never touch
-PROTECTED_UNITS=(
-    "systemd-journald.service" "systemd-udevd.service" "dbus.service" 
-    "networking.service" "ssh.service" "systemd-networkd.service"
-)
-
-# High-overhead services to target for removal
 TARGET_UNITS=(
-    "apt-daily.service" "apt-daily.timer" "apt-daily-upgrade.service" 
-    "apt-daily-upgrade.timer" "man-db.timer" "e2scrub_all.timer" 
-    "motd-news.timer" "bluetooth.service" "ModemManager.service" 
-    "avahi-daemon.service" "cups.service" "smartmontools.service"
-    "packagekit.service" "udisks2.service" "fwupd.service"
+  ModemManager.service
+  bluetooth.service
+  cups.service
+  avahi-daemon.service
 )
 
-log() { printf '%s %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$LOG_TAG" "$1"; }
+log() { printf '[hyperos-systemd] %s\n' "$*"; }
 
-run_cmd() {
-    [[ "$DRY_RUN" == "1" ]] && log "DRY_RUN: $*" || "$@"
+run() {
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log "[dry-run] $*"
+  else
+    "$@"
+  fi
 }
 
-# --- 1. Pre-Flight & Benchmarking ---
-[[ "$EUID" -ne 0 ]] && { echo "Root required." >&2; exit 1; }
-
-log "Capturing baseline performance..."
-PRE_BOOT_TIME=$(systemd-analyze | awk '/Startup finished/ {print $4 " (kernel) + " $7 " (userspace)"}')
-log "Baseline Boot: $PRE_BOOT_TIME"
-
-# --- 2. Advanced Conflict Resolution ---
-validate_unit() {
-    local unit=$1
-    # Check if unit is in the protected list
-    for prot in "${PROTECTED_UNITS[@]}"; do
-        [[ "$unit" == "$prot" ]] && return 1
-    done
-    # Check if unit actually exists
-    systemctl list-unit-files "$unit" >/dev/null 2>&1 || return 1
-    return 0
+require_root() {
+  [[ $EUID -eq 0 ]] || { echo "run as root" >&2; exit 1; }
 }
 
-# --- 3. Execution Phase ---
-log "Optimizing unit tree..."
+apply_changes() {
+  run install -d -m 0755 "$STATE_DIR"
+  : > "$STATE_FILE"
 
-for unit in "${TARGET_UNITS[@]}"; do
-    if validate_unit "$unit"; then
-        # Check if it's currently running/enabled
-        if systemctl is-enabled "$unit" >/dev/null 2>&1; then
-            log "Action: Purging $unit"
-            if [[ "$DRY_RUN" == "1" ]]; then
-                run_cmd systemctl disable --now "$unit"
-                run_cmd systemctl mask "$unit"
-            else
-                systemctl disable --now "$unit"
-                systemctl mask "$unit"
-            fi
-        fi
-    else
-        log "Skipping (Protected or Missing): $unit"
+  for unit in "${TARGET_UNITS[@]}"; do
+    if systemctl list-unit-files "$unit" >/dev/null 2>&1; then
+      if systemctl is-enabled "$unit" >/dev/null 2>&1; then
+        echo "$unit" >> "$STATE_FILE"
+        run systemctl disable --now "$unit"
+      fi
     fi
-done
+  done
 
-# --- 4. Advanced: Systemd Manager Optimizations ---
-# Reducing the global timeout for hanging services
-log "Tuning Systemd Manager timing..."
-TUNING_CONF="/etc/systemd/system.conf.d/10-low-latency.conf"
-run_cmd mkdir -p "$(dirname "$TUNING_CONF")"
-if [[ "$DRY_RUN" == "0" ]]; then
-    cat <<EOF > "$TUNING_CONF"
-[Manager]
-DefaultTimeoutStartSec=10s
-DefaultTimeoutStopSec=5s
-DefaultRestartSec=100ms
-DefaultLimitNOFILE=65535
-EOF
-fi
+  log "applied; see $STATE_FILE for rollback source"
+}
 
-# --- 5. Post-Optimization Summary ---
-log "Reloading daemon and validating state..."
-run_cmd systemctl daemon-reload
+rollback() {
+  [[ -f "$STATE_FILE" ]] || { log "no state file: $STATE_FILE"; exit 1; }
+  while read -r unit; do
+    [[ -n "$unit" ]] || continue
+    if systemctl list-unit-files "$unit" >/dev/null 2>&1; then
+      run systemctl unmask "$unit" 2>/dev/null || true
+      run systemctl enable "$unit"
+    fi
+  done < "$STATE_FILE"
 
-log "Post-Optimization Stats:"
-systemd-analyze blame | head -n 5 | sed 's/^/  [Blame] /'
-log "Done. Run 'systemd-analyze critical-chain' after next reboot to verify."
+  log "rollback complete"
+}
+
+show_metrics() {
+  log "critical-chain"
+  systemd-analyze critical-chain | sed -n '1,25p'
+  log "top boot services"
+  systemd-analyze blame | sed -n '1,15p'
+}
+
+main() {
+  require_root
+  case "$MODE" in
+    apply) apply_changes ;;
+    rollback) rollback ;;
+    metrics) show_metrics ;;
+    *) echo "usage: $0 [apply|rollback|metrics]" >&2; exit 1 ;;
+  esac
+}
+
+main "$@"

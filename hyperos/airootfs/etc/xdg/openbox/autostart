@@ -1,5 +1,21 @@
-# Hyper OS system-wide Openbox autostart
-nitrogen --set-zoom-fill --save /usr/share/hyperos-branding/wallpapers/hyperos-default.svg &
-tint2 &
-nm-applet &
-pcmanfm --desktop --profile LXDE &
+# Hyper OS Openbox autostart (minimal)
+
+# Ensure DBus session for desktop helpers
+if command -v dbus-launch >/dev/null 2>&1 && [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+  eval "$(dbus-launch --sh-syntax --exit-with-session)"
+fi
+
+# Networking indicator
+command -v nm-applet >/dev/null 2>&1 && nm-applet &
+
+# PolicyKit authentication agent
+if [ -x /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 ]; then
+  /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
+fi
+
+# Desktop icons / background handling
+command -v pcmanfm >/dev/null 2>&1 && pcmanfm --desktop --profile LXDE &
+
+# Keep screen awake during install/live session
+xset -dpms
+xset s off

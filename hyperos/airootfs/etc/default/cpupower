@@ -1,0 +1,4 @@
+# Balanced default for laptops and desktops
+governor='schedutil'
+min_freq=''
+max_freq=''

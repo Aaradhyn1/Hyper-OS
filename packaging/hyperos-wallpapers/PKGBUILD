@@ -1,0 +1,20 @@
+pkgname=hyperos-wallpapers
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Hyper OS wallpaper pack (lightweight SVG assets)'
+arch=('any')
+url='https://github.com/hyper-os'
+license=('custom')
+source=(
+  'files/usr/share/hyperos/wallpapers/hyper-grid.svg'
+)
+sha256sums=('SKIP')
+
+package() {
+  cd "$srcdir/files"
+  cp -a usr "$pkgdir/"
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  cat > "$pkgdir/usr/share/licenses/$pkgname/LICENSE" <<'LIC'
+Hyper OS wallpaper assets.
+LIC
+}

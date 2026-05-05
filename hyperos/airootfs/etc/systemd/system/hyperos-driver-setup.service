@@ -1,0 +1,15 @@
+[Unit]
+Description=Hyper OS GPU driver auto-provisioning
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/hyperos/driver-setup.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hyperos-driver-setup.sh
+StandardOutput=journal+console
+StandardError=journal+console
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
