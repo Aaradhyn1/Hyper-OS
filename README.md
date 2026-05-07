@@ -1,4 +1,4 @@
-# Hyper OS v0.1
+ # Hyper OS v0.1
 
 Hyper OS is built through a single deterministic entrypoint:
 
