@@ -1,5 +1,5 @@
 pkgname=hyperos-branding
-pkgver=1.0.0
+pkgver=1.0.0 
 pkgrel=1
 pkgdesc='Hyper OS visual identity and UX configuration bundle'
 arch=('any')
