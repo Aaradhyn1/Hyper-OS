@@ -17,7 +17,7 @@ source=(
   'files/etc/lightdm/lightdm-gtk-greeter.conf'
   'files/etc/xdg/openbox/autostart'
   'files/etc/xdg/openbox/rc.xml'
-  'files/etc/xdg/tint2/tint2rc'
+  'files/etc/xdg/tint2/tint2rc' 
   'files/etc/xdg/fastfetch/config.jsonc'
   'files/etc/skel/.bashrc'
   'files/usr/share/hyperos/branding/tagline.txt'
