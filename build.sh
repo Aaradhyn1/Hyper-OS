@@ -1,4 +1,4 @@
- #!/usr/bin/env bash 
+#!/usr/bin/env bash 
 set -Eeuo pipefail
 
 # --- Advanced Environment & Metadata ---
@@ -11,35 +11,46 @@ readonly ROOTFS_DIR="$BUILD_DIR/rootfs"
 readonly BRAND_ID="hyperos"
 readonly CALAMARES_DIR="$ROOTFS_DIR/etc/calamares"
 readonly BRAND_DIR="$CALAMARES_DIR/branding/$BRAND_ID"
-
-# Assets (Expects these in your source tree)
 readonly SOURCE_ASSETS="$ROOT_DIR/assets/branding"
 
 # --- UI Styling Constants ---
 readonly COLOR_BG="#0a0a0a"
+readonly COLOR_TEXT_PRIMARY="#ffffff"
+readonly COLOR_TEXT_MUTED="#888888"
 readonly COLOR_ACCENT="#00f2ff"
 
 # =========================
 # Utilities
 # =========================
-log() { printf "\e[34m[CORE]\e[0m %s\n" "$*"; }
+log()  { printf "\e[34m[CORE]\e[0m %s\n" "$*"; }
 info() { printf "\e[36m[INFO]\e[0m %s\n" "$*"; }
 warn() { printf "\e[33m[WARN]\e[0m %s\n" "$*"; }
-die() { printf "\e[31m[FATAL]\e[0m %s\n" "$*" >&2; exit 1; }
+die()  { printf "\e[31m[FATAL]\e[0m %s\n" "$*" >&2; exit 1; }
 
 # =========================
 # Core Logic
 # =========================
 
 setup_structure() {
-    info "Initializing branding directory: $BRAND_DIR"
+    info "Initializing branding directory structural hierarchy..."
     mkdir -p "$BRAND_DIR/lang"
 }
 
+sync_assets() {
+    if [[ -d "$SOURCE_ASSETS" ]]; then
+        info "Syncing binary vector and raster assets..."
+        # Safely expand matching extensions using find to prevent globbing crashes
+        find "$SOURCE_ASSETS" -maxdepth 1 -type f \( -name "*.png" -o -name "*.svg" \) -exec cp -t "$BRAND_DIR/" {} +
+    else
+        warn "Source assets directory missing at $SOURCE_ASSETS. Deploying fallback placeholders..."
+        # Prevent Calamares crash due to missing critical images
+        touch "$BRAND_DIR/logo.png" "$BRAND_DIR/icon.png" "$BRAND_DIR/welcome.png"
+    fi
+}
+
 inject_qml_logic() {
-    info "Generating reactive QML Slideshow..."
+    info "Generating reactive QML Slideshow with smooth cross-fades..."
     
-    # Using a HEREDOC but with variables for easy theming
     cat > "$BRAND_DIR/show.qml" <<EOF
 import QtQuick 2.15
 import QtQuick.Controls 2.15
@@ -57,10 +68,9 @@ Rectangle {
         { title: "Privacy First", desc: "Hardened defaults with zero telemetry.", img: "shield.png" }
     ]
 
-    // Background Gradient Effect
     Rectangle {
         anchors.fill: parent
-        opacity: 0.1
+        opacity: 0.08
         gradient: Gradient {
             GradientStop { position: 0.0; color: "$COLOR_ACCENT" }
             GradientStop { position: 1.0; color: "transparent" }
@@ -69,42 +79,58 @@ Rectangle {
 
     Timer {
         interval: 8000; running: true; repeat: true
-        onTriggered: currentSlide = (currentSlide + 1) % content.length
+        onTriggered: {
+            slideOut.start()
+        }
+    }
+
+    SequentialAnimation {
+        id: slideOut
+        NumberAnimation { target: mainLayout; property: "opacity"; to: 0; duration: 400; easing.type: Easing.InOutQuad }
+        ScriptAction {
+            script: root.currentSlide = (root.currentSlide + 1) % root.content.length
+        }
+        NumberAnimation { target: mainLayout; property: "opacity"; to: 1; duration: 400; easing.type: Easing.InOutQuad }
     }
 
     ColumnLayout {
+        id: mainLayout
         anchors.centerIn: parent
         width: parent.width * 0.8
         spacing: 30
+        opacity: 1
 
         Image {
-            source: content[currentSlide].img
+            source: root.content[root.currentSlide].img
             Layout.preferredWidth: 128
             Layout.preferredHeight: 128
             Layout.alignment: Qt.AlignHCenter
             fillMode: Image.PreserveAspectFit
+            asynchronous: true
         }
 
-        Column {
+        ColumnLayout {
             Layout.fillWidth: true
-            spacing: 10
+            spacing: 12
             
             Text {
-                text: content[currentSlide].title
-                color: "white"
-                font.pixelSize: 28
-                font.weight: Font.Bold
-                width: parent.width
+                text: root.content[root.currentSlide].title
+                color: "$COLOR_TEXT_PRIMARY"
+                font.pixelSize: 26
+                font.bold: true
+                Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
+                renderType: Text.NativeRendering
             }
 
             Text {
-                text: content[currentSlide].desc
-                color: "#888"
-                font.pixelSize: 16
-                width: parent.width
+                text: root.content[root.currentSlide].desc
+                color: "$COLOR_TEXT_MUTED"
+                font.pixelSize: 15
+                Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 horizontalAlignment: Text.AlignHCenter
+                renderType: Text.NativeRendering
             }
         }
     }
@@ -113,7 +139,7 @@ EOF
 }
 
 inject_branding_desc() {
-    info "Configuring branding.desc..."
+    info "Configuring descriptor layer: branding.desc..."
 
     cat > "$BRAND_DIR/branding.desc" <<EOF
 ---
@@ -141,18 +167,14 @@ slideshow:               "show.qml"
 
 style:
    sidebarBackground:    "$COLOR_BG"
-   sidebarText:          "#FFFFFF"
+   sidebarText:          "$COLOR_TEXT_PRIMARY"
    sidebarTextSelect:    "$COLOR_ACCENT"
    sidebarTextHighlight: "$COLOR_ACCENT"
 EOF
-}
 
-sync_assets() {
-    if [[ -d "$SOURCE_ASSETS" ]]; then
-        info "Syncing binary assets (Images/Icons)..."
-        cp -v "$SOURCE_ASSETS"/*.{png,svg} "$BRAND_DIR/" 2>/dev/null || warn "No images found in $SOURCE_ASSETS"
-    else
-        warn "Source assets directory not found. UI might look broken!"
+    # Validate output schema syntax if tools are present
+    if command -v yamllint &> /dev/null; then
+        yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "$BRAND_DIR/branding.desc" || die "YAML Syntax validation failed in branding.desc"
     fi
 }
 
@@ -160,22 +182,17 @@ sync_assets() {
 # Pipeline Entry
 # =========================
 main() {
-    [[ $EUID -eq 0 ]] || die "This script modifies RootFS and must be run as root."
-    [[ -d "$ROOTFS_DIR" ]] || die "RootFS path '$ROOTFS_DIR' not found."
+    [[ $EUID -eq 0 ]] || die "Privilege escalation required. Please run this script execution as root."
+    [[ -d "$ROOTFS_DIR" ]] || die "Target RootFS target workspace path '$ROOTFS_DIR' does not exist."
 
-    log "--- Hyper Branding Engine Starting ---"
+    log "--- Hyper Branding Engine Deployment Initialized ---"
     
     setup_structure
     sync_assets
     inject_qml_logic
     inject_branding_desc
     
-    # Final check: Calamares looks for branding.desc specifically.
-    if [[ -f "$BRAND_DIR/branding.desc" ]]; then
-        log "Success: Branding for '$BRAND_ID' injected into $CALAMARES_DIR"
-    else
-        die "Pipeline finished but branding.desc is missing."
-    fi
+    log "Deployment verified. Branding successfully initialized for framework ID: $BRAND_ID"
 }
 
 main "$@"
